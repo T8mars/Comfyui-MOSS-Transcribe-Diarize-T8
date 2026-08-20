@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comfyui-moss-transcribe-diarize-t8"
+version = "0.1.0"
+description = "ComfyUI V3 nodes for MOSS Transcribe Diarize, by T8star-Aix"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "T8star-Aix" }]
+keywords = ["comfyui", "asr", "diarization", "subtitles", "audio"]
+dependencies = [
+  "av>=14.0",
+  "filelock>=3.13",
+  "huggingface-hub>=0.34,<2",
+  "librosa>=0.11.0",
+  "numba>=0.61.0",
+  "numpy>=1.26,<3",
+  "packaging>=24",
+  "safetensors>=0.6.2",
+  "soundfile>=0.12",
+  "soxr>=0.5",
+]
+
+[project.urls]
+Repository = "https://github.com/T8mars/comfyui-MOSS-Transcribe-Diarize-T8"
+Upstream = "https://github.com/OpenMOSS/MOSS-Transcribe-Diarize"
+Model = "https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize"
+
+[tool.comfy]
+PublisherId = "t8star"
+DisplayName = "MOSS Transcribe Diarize · T8star-Aix"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
