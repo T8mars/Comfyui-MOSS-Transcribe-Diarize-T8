@@ -13,27 +13,27 @@
 
    也可以下载 GitHub Release ZIP，并解压为同名目录。
 
-2. 在 ComfyUI Python 环境执行 `pip install -r requirements.txt`。依赖清单不会安装或替换 `torch`、`torchaudio`、`torchvision` 或 `transformers`。
-3. 执行 `python scripts/check_transformers.py`。已有 Transformers 4.52.1–5.x 会原样保留；仅当版本过旧时，才按提示选择 `requirements-transformers-v4.txt` 修复到 4.57.6。
-4. 在节点目录执行 `python scripts/download_models.py`，或手动把固定版本模型放到 `ComfyUI/models/moss_transcribe_diarize/MOSS-Transcribe-Diarize`。
+2. 在 ComfyUI Python 环境执行 `pip install -r requirements.txt`。依赖清单不会安装或替换 `torch`、`torchaudio`、`torchvision` 或 `transformers`。Windows Portable 应使用 `..\..\python_embeded\python.exe -m pip install -r requirements.txt`，不要误装到系统 Python。
+3. 执行 `python scripts/check_transformers.py`；Windows Portable 对应 `..\..\python_embeded\python.exe scripts\check_transformers.py`。已有 Transformers 4.52.1–5.x 会原样保留；仅当版本过旧时，才按提示选择 `requirements-transformers-v4.txt` 修复到 4.57.6。
+4. 在节点目录执行 `python scripts/download_models.py --comfyui-root ..\..`；Windows Portable 对应 `..\..\python_embeded\python.exe scripts\download_models.py --comfyui-root ..\..`。也可以用 `--target` 指定绝对目录，或手动把固定版本模型放到 `ComfyUI/models/moss_transcribe_diarize/MOSS-Transcribe-Diarize`。脚本启动下载前会打印最终目标目录，无法确认 ComfyUI 根目录时会直接报错，不会把权重静默放进 `custom_nodes`。
 5. 重启 ComfyUI，加载 `example_workflows/ui` 中的可视化工作流；API 调用示例位于 `example_workflows/api`。基础示例覆盖热词和字幕导出，长音频示例增加转写校验与环境诊断。
 
-模型固定到 Hugging Face revision `e8681d68e7042738ffca8ac8212bc8fcb1131ab8`，代码基线固定到 OpenMOSS revision `0e3d1403fd8f1f1c674e883ece96b9f630794ebe`。加载器默认校验文件大小，可选全量 SHA-256。
+模型固定到 Hugging Face revision `e8681d68e7042738ffca8ac8212bc8fcb1131ab8`，代码审计基线固定到 OpenMOSS revision `e607537b1b870475e7898969d40b864de8b691b6`。加载器默认校验文件大小，可选全量 SHA-256；下载脚本会在模型目录写入仅供本机诊断的 `.t8-download-report.json`，不发送远程统计。
 
 ## 六个 V3 节点
 
-- 模型加载器：扫描标准模型目录和 `extra_model_paths.yaml` 注册路径，惰性加载、精度选择、哈希校验。
-- 提示词与热词：构建严格格式提示、语言提示和专有名词热词。
-- 转写与说话人分离：接收标准 `AUDIO`，安全下混/重采样至 16kHz，回传生成进度并响应 ComfyUI 中断，输出透传音频、原文、JSON、SRT、ASS、`T8_MOSS_TRANSCRIPT`。
-- 转写解析与校验：检查输出格式、时间戳顺序/越界和 token 上限。
-- 字幕导出：说话人重命名并导出 JSON/TXT/SRT/ASS，可写入 ComfyUI `output` 目录。
+- 模型加载器：扫描标准模型目录和 `extra_model_paths.yaml` 注册路径，惰性加载、精度/Attention 选择、哈希校验，并提供常驻、显存压力释放、每次释放三档策略。
+- 提示词与热词：构建严格格式提示、场景预设、语言提示和专有名词热词。
+- 转写与说话人分离：接收标准 `AUDIO`，安全下混/重采样至 16kHz，模型加载前执行可配置静音预检，回传生成进度并响应 ComfyUI 中断，输出透传音频、原文、JSON、SRT、ASS、`T8_MOSS_TRANSCRIPT`。
+- 转写解析与校验：检查输出格式、时间戳顺序/越界和 token 上限；缺失说话人标签的有效片段以未知 `S00` 保留并告警。
+- 字幕导出：支持当前分片重命名和显式的跨分片人工说话人映射，导出 JSON/TXT/SRT/ASS，可写入 ComfyUI `output` 目录。
 - 环境诊断与模型释放：报告 Transformers/PyTorch/CUDA/显存，只释放本节点包缓存的模型。
 
 ## 兼容与限制
 
 - 支持 Transformers `>=4.52.1,<6`，共享兼容层避免强制把现有 ComfyUI 升级到 5.x；已通过 4.52.1、4.57.6、5.6.0、5.15.1 兼容测试。
-- Windows 10/11 x64 + NVIDIA 10GB 以上为正式目标。8GB 只保证经过实测的短音频；CPU FP32 仅作功能兜底，不承诺速度。
-- 输出是句/段级时间戳，不是逐词时间戳。长音频优先一次推理；将来若启用分片，各分片的 `S01/S02` 不能自动视为跨分片同一人。
+- Windows 10/11 x64 + NVIDIA 12GB 以上为正式目标。8-10GB 仅作为短音频兼容档；CPU FP32 仅作功能兜底，不承诺速度。
+- 输出是句/段级时间戳，不是逐词时间戳。长音频优先一次推理；各分片的 `S01/S02` 不能自动视为跨分片同一人，只能通过导出节点显式人工映射。
 - 静音、长静音、复杂长音频可能出现幻觉、提前结束或重复。节点会输出诊断，但不会自动把可疑结果伪装成可靠结果。
 - 模型权重不放入 `custom_nodes`，由固定 revision 下载或外置共享。
 
@@ -49,8 +49,9 @@
 |---:|---:|---:|---:|---|
 | 2 分钟 | 32.2 秒 | 2.33GB | 782 / 2944 | 31 段，无截断、无诊断错误 |
 | 5 分钟 | 96.9 秒 | 4.53GB | 2073 / 5824 | 79 段，无截断、无诊断错误 |
+| 10 分钟 | 282.4 秒 | 11.606GB | 4184 / 10624 | 157 段，覆盖至 600 秒、未截断；循环夹具触发重复文本告警 |
 
-测试音频为重复的清晰英语语音，用于确认普通时长的完整执行链路，不代表真实会议质量基准；不同音频、显卡和提示词会产生不同结果。
+测试音频为重复的清晰英语语音，用于确认普通时长的完整执行链路，不代表真实会议质量基准；不同音频、显卡和提示词会产生不同结果。10 分钟结果来自 24GB RTX 5090 Laptop，不能证明 10GB 显卡可完成同一任务。
 
 ## 更新与卸载
 

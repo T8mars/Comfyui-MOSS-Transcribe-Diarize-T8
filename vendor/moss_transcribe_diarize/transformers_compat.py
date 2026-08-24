@@ -94,6 +94,52 @@ def load_local_model_and_processor(
     return model, processor
 
 
+def load_local_model_processor_with_attention(
+    model_path: str | Path,
+    *,
+    device: Any,
+    load_dtype: Any = "auto",
+    attention_implementation: str = "auto",
+    local_files_only: bool = True,
+):
+    """Load audited local code with an explicit attention fallback report."""
+    require_compatible_transformers()
+    from .attention import load_model_with_attention_fallback
+    from .configuration_moss_transcribe_diarize import MossTranscribeDiarizeConfig
+    from .modeling_moss_transcribe_diarize import MossTranscribeDiarizeForConditionalGeneration
+    from .processing_moss_transcribe_diarize import MossTranscribeDiarizeProcessor
+
+    model_path = str(Path(model_path).expanduser().resolve())
+
+    def local_model_loader(path: str, *, attn_implementation: str):
+        # Load a fresh config for each fallback attempt because Transformers may
+        # mutate its private attention fields during from_pretrained().
+        config = MossTranscribeDiarizeConfig.from_pretrained(
+            path,
+            local_files_only=local_files_only,
+        )
+        return MossTranscribeDiarizeForConditionalGeneration.from_pretrained(
+            path,
+            config=config,
+            local_files_only=local_files_only,
+            attn_implementation=attn_implementation,
+            **pretrained_dtype_kwargs(load_dtype),
+        )
+
+    model, attention_report = load_model_with_attention_fallback(
+        model_path,
+        device=device,
+        dtype=load_dtype,
+        requested=attention_implementation,
+        model_loader=local_model_loader,
+    )
+    processor = MossTranscribeDiarizeProcessor.from_pretrained(
+        model_path,
+        local_files_only=local_files_only,
+    )
+    return model, processor, attention_report
+
+
 __all__ = [
     "MAX_TRANSFORMERS",
     "MIN_TRANSFORMERS",
@@ -101,6 +147,7 @@ __all__ = [
     "TransformersCompatibility",
     "compatibility_report",
     "load_local_model_and_processor",
+    "load_local_model_processor_with_attention",
     "pretrained_dtype_kwargs",
     "require_compatible_transformers",
     "transformers_version",

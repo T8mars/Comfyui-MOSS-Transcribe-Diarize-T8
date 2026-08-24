@@ -10,6 +10,8 @@ from transformers.audio_utils import load_audio
 from transformers.generation.stopping_criteria import StoppingCriteria, StoppingCriteriaList
 from transformers.generation.streamers import BaseStreamer
 
+from .attention import attention_execution_context
+
 
 DEFAULT_PROMPT = (
     "请将音频转写为文本，每一段需以起始时间戳和说话人编号"
@@ -201,9 +203,25 @@ def build_transcription_messages(
     ]
 
 
-def prepare_inputs(processor, messages, *, max_length: int = 131072, device: torch.device | None = None):
+def prepare_inputs(
+    processor,
+    messages,
+    *,
+    max_length: int = 131072,
+    device: torch.device | None = None,
+    audio_callback: Callable[[float], None] | None = None,
+):
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     audios = process_audio_info(messages, sampling_rate=processor.feature_extractor.sampling_rate)
+    if audio_callback is not None:
+        flattened = [np.asarray(audio, dtype=np.float64).reshape(-1) for audio in audios]
+        total_samples = sum(values.size for values in flattened)
+        mean_square = (
+            sum(float(np.dot(values, values)) for values in flattened) / total_samples
+            if total_samples
+            else 0.0
+        )
+        audio_callback(float(np.sqrt(mean_square)))
     audio_kwargs = {"device": str(device)} if device is not None and device.type == "cuda" else {}
     return processor(
         text=text,
@@ -228,8 +246,10 @@ def generate_transcription(
     device: torch.device | None = None,
     dtype: torch.dtype | None = None,
     input_callback: Callable[[int], None] | None = None,
+    audio_callback: Callable[[float], None] | None = None,
     token_callback: TokenCallback | None = None,
     cancellation_callback: Callable[[], bool] | None = None,
+    attention_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     device = device or next(model.parameters()).device
     dtype = dtype or next(model.parameters()).dtype
@@ -239,7 +259,13 @@ def generate_transcription(
         else torch.no_grad()
     )
     with context:
-        inputs = prepare_inputs(processor, messages, max_length=max_length, device=device).to(device)
+        inputs = prepare_inputs(
+            processor,
+            messages,
+            max_length=max_length,
+            device=device,
+            audio_callback=audio_callback,
+        ).to(device)
 
     prompt_len = int(inputs["attention_mask"][0].sum().item())
     if input_callback is not None:
@@ -270,18 +296,19 @@ def generate_transcription(
             [CancellationStoppingCriteria(cancellation_callback)]
         )
 
-    with torch.inference_mode(), (
-        torch.amp.autocast("cuda", dtype=dtype)
-        if device.type == "cuda" and dtype in (torch.float16, torch.bfloat16)
-        else torch.no_grad()
-    ):
-        try:
-            outputs = model.generate(**generate_kwargs)
-        except TypeError as exc:
-            if streamer is None or "streamer" not in str(exc):
-                raise
-            generate_kwargs.pop("streamer", None)
-            outputs = model.generate(**generate_kwargs)
+    with attention_execution_context(attention_report):
+        with torch.inference_mode(), (
+            torch.amp.autocast("cuda", dtype=dtype)
+            if device.type == "cuda" and dtype in (torch.float16, torch.bfloat16)
+            else torch.no_grad()
+        ):
+            try:
+                outputs = model.generate(**generate_kwargs)
+            except TypeError as exc:
+                if streamer is None or "streamer" not in str(exc):
+                    raise
+                generate_kwargs.pop("streamer", None)
+                outputs = model.generate(**generate_kwargs)
 
     if cancellation_callback is not None and cancellation_callback():
         raise GenerationCancelled("Transcription was cancelled.")

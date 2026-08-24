@@ -15,6 +15,11 @@ The final release must include the exact license texts produced by the release S
   `manifests/ffmpeg_windows_x64.json`. The package keeps `LICENSE.txt`, matching FFmpeg source and
   BtbN build scripts under `resources/ffmpeg/source`. Video burn-in uses FFmpeg's native MPEG-4 and
   AAC encoders instead of GPL-only libx264.
-- NVIDIA CUDA runtime libraries: redistribution is subject to the NVIDIA CUDA Toolkit EULA and must be audited for the exact wheel contents.
+- NVIDIA CUDA and cuDNN runtime libraries bundled by the pinned PyTorch wheel: redistribution is
+  subject to the [NVIDIA CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/) and
+  [cuDNN software license](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html).
+  The exact DLL names, sizes, and SHA-256 values are generated as
+  `resources/packaging/metadata/nvidia-runtime-inventory.json`. Public distribution remains gated on
+  an organization-level review of that inventory and the applicable NVIDIA terms.
 
 No third-party project endorses the T8star-Aix integration unless explicitly stated by that project.

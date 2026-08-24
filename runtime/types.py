@@ -12,10 +12,20 @@ class ModelHandle:
     precision: str
     release_after_run: bool = False
     model_revision: str = ""
+    memory_policy: str = "keep"
+    attention_implementation: str = "auto"
 
     @property
-    def cache_key(self) -> tuple[str, str, str]:
-        return (str(self.model_dir.resolve()), self.device, self.precision)
+    def cache_key(self) -> tuple[str, str, str, str]:
+        return (str(self.model_dir.resolve()), self.device, self.precision, self.attention_implementation)
+
+    @property
+    def effective_memory_policy(self) -> str:
+        if self.release_after_run:
+            return "release_after_run"
+        if self.memory_policy not in {"keep", "release_after_run", "release_under_pressure"}:
+            raise ValueError(f"Unsupported memory policy: {self.memory_policy}")
+        return self.memory_policy
 
 
 @dataclass(slots=True, frozen=True)

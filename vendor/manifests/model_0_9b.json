@@ -3,7 +3,7 @@
   "model_id": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
   "revision": "e8681d68e7042738ffca8ac8212bc8fcb1131ab8",
   "code_repository": "OpenMOSS/MOSS-Transcribe-Diarize",
-  "code_revision": "0e3d1403fd8f1f1c674e883ece96b9f630794ebe",
+  "code_revision": "e607537b1b870475e7898969d40b864de8b691b6",
   "license": "Apache-2.0",
   "files": {
     "added_tokens.json": {"size": 707, "sha256": "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680"},

@@ -24,6 +24,9 @@ from .services.model_store import (
     validate_model_dir,
 )
 from .vendor.moss_transcribe_diarize.inference_utils import DEFAULT_PROMPT
+from .vendor.moss_transcribe_diarize.attention import ATTENTION_IMPLEMENTATIONS, AUTO_ATTENTION_IMPLEMENTATION
+from .vendor.moss_transcribe_diarize.prompt_presets import PROMPT_PRESETS
+from .vendor.moss_transcribe_diarize.speaker_mapping import resolve_speaker_names
 from .vendor.moss_transcribe_diarize.subtitle import SubtitleSegment, SubtitleStyle, export_ass, export_json, export_srt
 from .vendor.moss_transcribe_diarize.transcript_validation import validate_transcript
 from .vendor.moss_transcribe_diarize.transformers_compat import compatibility_report
@@ -97,9 +100,10 @@ class T8MossModelLoader(io.ComfyNode):
                 ),
                 io.Boolean.Input(
                     "release_after_run",
-                    display_name="转写后释放本模型",
+                    display_name="旧工作流：转写后释放",
                     default=False,
                     advanced=True,
+                    tooltip="兼容旧工作流；开启时覆盖显存驻留策略。",
                 ),
                 io.Boolean.Input(
                     "verify_hashes",
@@ -107,6 +111,21 @@ class T8MossModelLoader(io.ComfyNode):
                     default=False,
                     advanced=True,
                     tooltip="会读取约 1.8GB 权重；平时文件大小校验即可。",
+                ),
+                io.Combo.Input(
+                    "memory_policy",
+                    display_name="显存驻留策略",
+                    options=["keep", "release_under_pressure", "release_after_run"],
+                    default="keep",
+                    tooltip="常驻最快；压力释放会在可用显存低于 2GB 或 20% 时释放；每次释放最省显存。",
+                ),
+                io.Combo.Input(
+                    "attention_implementation",
+                    display_name="Attention 后端",
+                    options=[AUTO_ATTENTION_IMPLEMENTATION, *ATTENTION_IMPLEMENTATIONS],
+                    default=AUTO_ATTENTION_IMPLEMENTATION,
+                    advanced=True,
+                    tooltip="auto 会显式尝试 Flash Attention、SDPA，最后才回退 eager；实际选择写入转写元数据。",
                 ),
                 io.String.Input(
                     "custom_model_path",
@@ -130,15 +149,38 @@ class T8MossModelLoader(io.ComfyNode):
         precision: str,
         release_after_run: bool,
         verify_hashes: bool,
+        memory_policy: str = "keep",
+        attention_implementation: str = AUTO_ATTENTION_IMPLEMENTATION,
         custom_model_path: str = "",
     ) -> str:
         try:
-            return model_fingerprint(resolve_model(model_name, custom_model_path))
+            fingerprint = model_fingerprint(resolve_model(model_name, custom_model_path))
+            return ":".join(
+                (
+                    fingerprint,
+                    device,
+                    precision,
+                    memory_policy,
+                    attention_implementation,
+                    str(bool(release_after_run)),
+                    str(bool(verify_hashes)),
+                )
+            )
         except Exception as exc:
             return f"missing:{model_name}:{custom_model_path}:{exc}"
 
     @classmethod
     def validate_inputs(cls, model_name: str, custom_model_path: str = "", **kwargs) -> bool | str:
+        try:
+            transformers = compatibility_report()
+        except RuntimeError as exc:
+            return f"Transformers 环境不可用：{exc}。请运行 scripts/check_transformers.py。"
+        if not transformers.supported:
+            return (
+                f"Transformers {transformers.installed} 不受支持，需要 >= {transformers.minimum}, "
+                f"< {transformers.maximum_exclusive}。请运行 scripts/check_transformers.py，"
+                "不要替换 ComfyUI 的 Torch。"
+            )
         if model_name == MISSING_MODEL_OPTION and not custom_model_path.strip():
             return "未找到 MOSS 模型；请运行节点目录中的 scripts/download_models.py。"
         return True
@@ -151,6 +193,8 @@ class T8MossModelLoader(io.ComfyNode):
         precision: str,
         release_after_run: bool,
         verify_hashes: bool,
+        memory_policy: str = "keep",
+        attention_implementation: str = AUTO_ATTENTION_IMPLEMENTATION,
         custom_model_path: str = "",
     ) -> io.NodeOutput:
         model_dir = resolve_model(model_name, custom_model_path)
@@ -164,15 +208,19 @@ class T8MossModelLoader(io.ComfyNode):
             precision=precision,
             release_after_run=bool(release_after_run),
             model_revision=manifest["revision"],
+            memory_policy=memory_policy,
+            attention_implementation=attention_implementation,
         )
         warning = ""
         if resolved_device.startswith("cuda"):
             index = int(resolved_device.split(":", 1)[1]) if ":" in resolved_device else 0
             total_gb = torch.cuda.get_device_properties(index).total_memory / 1024**3
-            if total_gb < 10:
-                warning = f" | 警告：{total_gb:.1f}GB 低于正式支持的 10GB 基线，仅建议短音频"
+            if total_gb < 12:
+                warning = f" | 警告：{total_gb:.1f}GB 低于正式支持的 12GB 基线，仅建议短音频"
         info = (
             f"MOSS Transcribe Diarize | {model_dir} | device={resolved_device} | precision={precision} | "
+            f"memory={handle.effective_memory_policy} | "
+            f"attention={handle.attention_implementation} | "
             f"{'SHA-256 已校验' if verify_hashes else '文件大小已校验'} | revision={manifest['revision'][:12]}{warning}"
         )
         return io.NodeOutput(handle, info)
@@ -194,6 +242,12 @@ class T8MossPromptHotwords(io.ComfyNode):
                     multiline=True,
                     default=DEFAULT_PROMPT,
                     dynamic_prompts=False,
+                ),
+                io.Combo.Input(
+                    "preset_id",
+                    display_name="场景预设",
+                    options=[preset.id for preset in PROMPT_PRESETS],
+                    default="default",
                 ),
                 io.String.Input(
                     "hotwords",
@@ -217,8 +271,15 @@ class T8MossPromptHotwords(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, base_prompt: str, hotwords: str, language_hint: str, strict_format: bool) -> io.NodeOutput:
-        prompt = build_prompt(base_prompt, hotwords, language_hint, strict_format)
+    def execute(
+        cls,
+        base_prompt: str,
+        hotwords: str,
+        language_hint: str,
+        strict_format: bool,
+        preset_id: str = "default",
+    ) -> io.NodeOutput:
+        prompt = build_prompt(base_prompt, hotwords, language_hint, strict_format, preset_id)
         return io.NodeOutput(prompt, prompt.text)
 
 
@@ -248,6 +309,13 @@ class T8MossTranscribeDiarize(io.ComfyNode):
                     tooltip="自动模式依据音频时长估算；达到上限会在诊断中明确提示可能截断。",
                 ),
                 PromptType.Input("prompt", display_name="提示词与热词", optional=True),
+                io.Combo.Input(
+                    "silence_policy",
+                    display_name="静音预检",
+                    options=["warn", "reject", "ignore"],
+                    default="warn",
+                    tooltip="warn 继续并给出诊断；reject 在载入模型前拒绝；ignore 仅记录检测结果。",
+                ),
             ],
             outputs=[
                 io.Audio.Output("audio", display_name="原音频透传"),
@@ -266,8 +334,15 @@ class T8MossTranscribeDiarize(io.ComfyNode):
         audio: dict,
         max_new_tokens: int,
         prompt: PromptConfig | None = None,
+        silence_policy: str = "warn",
     ) -> io.NodeOutput:
-        payload = run_transcription(model, audio, prompt, max_new_tokens=int(max_new_tokens))
+        payload = run_transcription(
+            model,
+            audio,
+            prompt,
+            max_new_tokens=int(max_new_tokens),
+            silence_policy=silence_policy,
+        )
         srt, ass = _subtitle_outputs(payload)
         return io.NodeOutput(audio, payload.raw_text, _transcript_json(payload), srt, ass, payload)
 
@@ -358,6 +433,8 @@ class T8MossSubtitleExport(io.ComfyNode):
             node_id="T8_MOSS_SubtitleExport",
             display_name="MOSS 字幕导出 · T8star-Aix",
             category=CATEGORY,
+            is_output_node=True,
+            not_idempotent=True,
             search_aliases=["SRT", "ASS", "JSON", "speaker names", "字幕导出"],
             description="输出 JSON/TXT/SRT/ASS 内容，并可安全写入 ComfyUI/output/moss_transcribe_diarize。",
             inputs=[
@@ -372,6 +449,15 @@ class T8MossSubtitleExport(io.ComfyNode):
                 io.Boolean.Input("show_speaker", display_name="字幕显示说话人", default=True),
                 io.String.Input("filename_prefix", display_name="文件名前缀", default="moss_transcript"),
                 io.Boolean.Input("write_files", display_name="写入 output 目录", default=True),
+                io.String.Input("chunk_id", display_name="分片 ID（可选）", default="", advanced=True),
+                io.String.Input(
+                    "cross_chunk_speaker_map_json",
+                    display_name="跨分片说话人映射 JSON",
+                    multiline=True,
+                    default='{"part1:S01": "主持人", "part2:S02": "主持人"}',
+                    dynamic_prompts=False,
+                    advanced=True,
+                ),
             ],
             outputs=[
                 io.String.Output("json", display_name="JSON 内容"),
@@ -390,6 +476,8 @@ class T8MossSubtitleExport(io.ComfyNode):
         show_speaker: bool,
         filename_prefix: str,
         write_files: bool,
+        chunk_id: str = "",
+        cross_chunk_speaker_map_json: str = "{}",
     ) -> io.NodeOutput:
         try:
             names = json.loads(speaker_names_json or "{}")
@@ -397,7 +485,13 @@ class T8MossSubtitleExport(io.ComfyNode):
             raise ValueError(f"说话人重命名 JSON 无效：{exc}") from exc
         if not isinstance(names, dict):
             raise ValueError("说话人重命名必须是 JSON 对象。")
-        names = {str(key): str(value).strip() for key, value in names.items() if str(value).strip()}
+        try:
+            cross_chunk_mapping = json.loads(cross_chunk_speaker_map_json or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"跨分片说话人映射 JSON 无效：{exc}") from exc
+        if not isinstance(cross_chunk_mapping, dict):
+            raise ValueError("跨分片说话人映射必须是 JSON 对象。")
+        names = resolve_speaker_names(names, cross_chunk_mapping, chunk_id=chunk_id)
         segments = _subtitle_segments(transcript)
         style = SubtitleStyle(show_speaker=bool(show_speaker), speaker_names=names or None)
         json_text = export_json(segments)
@@ -429,6 +523,8 @@ class T8MossEnvironmentRelease(io.ComfyNode):
             node_id="T8_MOSS_EnvironmentRelease",
             display_name="MOSS 环境诊断与模型释放 · T8star-Aix",
             category=CATEGORY,
+            is_output_node=True,
+            not_idempotent=True,
             search_aliases=["environment", "VRAM", "unload", "环境诊断", "释放显存"],
             description="报告 Transformers/PyTorch/CUDA/缓存状态，并且只释放本节点包加载的 MOSS 模型。",
             inputs=[
@@ -464,6 +560,7 @@ class T8MossEnvironmentRelease(io.ComfyNode):
                     "name": props.name,
                     "total_vram_gb": round(props.total_memory / 1024**3, 2),
                     "bf16_supported": bool(torch.cuda.is_bf16_supported(index)),
+                    "meets_12gb_baseline": props.total_memory >= 12 * 1024**3,
                     "meets_10gb_baseline": props.total_memory >= 10 * 1024**3,
                 })
         report = {
@@ -491,6 +588,12 @@ class T8MossEnvironmentRelease(io.ComfyNode):
 class T8MossExtension(ComfyExtension):
     async def on_load(self) -> None:
         register_model_paths()
+        try:
+            report = compatibility_report()
+            if not report.supported:
+                LOGGER.error("Unsupported Transformers %s: %s", report.installed, report.reason)
+        except RuntimeError as exc:
+            LOGGER.error("Transformers compatibility check failed: %s", exc)
         LOGGER.info("Loaded comfyui-MOSS-Transcribe-Diarize-T8 (V3 nodes)")
 
     async def get_node_list(self) -> list[type[io.ComfyNode]]:

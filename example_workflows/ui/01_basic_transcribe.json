@@ -16,14 +16,15 @@
         {"name": "precision", "type": "COMBO", "widget": {"name": "precision"}, "link": null},
         {"name": "release_after_run", "type": "BOOLEAN", "widget": {"name": "release_after_run"}, "link": null},
         {"name": "verify_hashes", "type": "BOOLEAN", "widget": {"name": "verify_hashes"}, "link": null},
+        {"name": "memory_policy", "type": "COMBO", "widget": {"name": "memory_policy"}, "link": null},
         {"name": "custom_model_path", "type": "STRING", "widget": {"name": "custom_model_path"}, "link": null, "shape": 7}
       ],
       "outputs": [
         {"name": "model", "type": "T8_MOSS_TRANSCRIBE_MODEL", "links": [1]},
         {"name": "model_info", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_ModelLoader", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.1.0"},
-      "widgets_values": ["MOSS-Transcribe-Diarize", "auto", "auto", false, false, ""]
+      "properties": {"Node name for S&R": "T8_MOSS_ModelLoader", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
+      "widgets_values": ["MOSS-Transcribe-Diarize", "auto", "auto", false, false, "keep", "auto", ""]
     },
     {
       "id": 2,
@@ -48,6 +49,7 @@
       "mode": 0,
       "inputs": [
         {"name": "base_prompt", "type": "STRING", "widget": {"name": "base_prompt"}, "link": null},
+        {"name": "preset_id", "type": "COMBO", "widget": {"name": "preset_id"}, "link": null},
         {"name": "hotwords", "type": "STRING", "widget": {"name": "hotwords"}, "link": null},
         {"name": "language_hint", "type": "COMBO", "widget": {"name": "language_hint"}, "link": null},
         {"name": "strict_format", "type": "BOOLEAN", "widget": {"name": "strict_format"}, "link": null}
@@ -56,8 +58,8 @@
         {"name": "prompt", "type": "T8_MOSS_PROMPT", "links": [3]},
         {"name": "prompt_text", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_PromptHotwords", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.1.0"},
-      "widgets_values": ["请将音频转写为文本，每段包含起止时间戳与说话人编号。", "OpenMOSS, ComfyUI, T8star-Aix", "中文", true]
+      "properties": {"Node name for S&R": "T8_MOSS_PromptHotwords", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
+      "widgets_values": ["请将音频转写为文本，每段包含起止时间戳与说话人编号。", "zh_meeting", "OpenMOSS, ComfyUI, T8star-Aix", "中文", true]
     },
     {
       "id": 4,
@@ -72,6 +74,7 @@
         {"name": "audio", "type": "AUDIO", "link": 2},
         {"name": "max_new_tokens", "type": "INT", "widget": {"name": "max_new_tokens"}, "link": null},
         {"name": "prompt", "type": "T8_MOSS_PROMPT", "link": 3, "shape": 7}
+        ,{"name": "silence_policy", "type": "COMBO", "widget": {"name": "silence_policy"}, "link": null}
       ],
       "outputs": [
         {"name": "audio", "type": "AUDIO", "links": []},
@@ -81,8 +84,8 @@
         {"name": "ass", "type": "STRING", "links": []},
         {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "links": [4]}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_TranscribeDiarize", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.1.0"},
-      "widgets_values": [0]
+      "properties": {"Node name for S&R": "T8_MOSS_TranscribeDiarize", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
+      "widgets_values": [0, "warn"]
     },
     {
       "id": 5,
@@ -98,6 +101,8 @@
         {"name": "show_speaker", "type": "BOOLEAN", "widget": {"name": "show_speaker"}, "link": null},
         {"name": "filename_prefix", "type": "STRING", "widget": {"name": "filename_prefix"}, "link": null},
         {"name": "write_files", "type": "BOOLEAN", "widget": {"name": "write_files"}, "link": null}
+        ,{"name": "chunk_id", "type": "STRING", "widget": {"name": "chunk_id"}, "link": null}
+        ,{"name": "cross_chunk_speaker_map_json", "type": "STRING", "widget": {"name": "cross_chunk_speaker_map_json"}, "link": null}
       ],
       "outputs": [
         {"name": "json", "type": "STRING", "links": []},
@@ -106,8 +111,8 @@
         {"name": "ass", "type": "STRING", "links": []},
         {"name": "files", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_SubtitleExport", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.1.0"},
-      "widgets_values": ["{\"S01\": \"主持人\", \"S02\": \"嘉宾\"}", true, "moss_meeting", true]
+      "properties": {"Node name for S&R": "T8_MOSS_SubtitleExport", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
+      "widgets_values": ["{\"S01\": \"主持人\", \"S02\": \"嘉宾\"}", true, "moss_meeting", true, "meeting-part1", "{}"]
     }
   ],
   "links": [

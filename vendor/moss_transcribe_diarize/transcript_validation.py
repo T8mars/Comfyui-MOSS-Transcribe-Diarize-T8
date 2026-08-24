@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict, dataclass
+import re
 
 from .transcript_parser import TranscriptSegment, parse_transcript
 
@@ -34,6 +36,7 @@ def validate_transcript(
     media_duration: float | None = None,
     generated_tokens: int | None = None,
     max_new_tokens: int | None = None,
+    audio_rms: float | None = None,
 ) -> TranscriptValidation:
     diagnostics: list[TranscriptDiagnostic] = []
     segments = tuple(parse_transcript(text))
@@ -49,7 +52,20 @@ def validate_transcript(
         )
 
     previous_start = -1.0
+    unlabelled_count = sum(1 for segment in segments if segment.speaker == "S00")
+    if unlabelled_count:
+        diagnostics.append(
+            TranscriptDiagnostic(
+                "warning",
+                "speaker_tag_missing",
+                f"{unlabelled_count} segment(s) omitted [Sxx]; preserved as unknown speaker S00.",
+            )
+        )
     for index, segment in enumerate(segments):
+        if segment.start < 0 or segment.end < segment.start:
+            diagnostics.append(
+                TranscriptDiagnostic("error", "invalid_timestamp", f"Segment {index + 1} has an invalid time range.")
+            )
         if segment.start < previous_start:
             diagnostics.append(
                 TranscriptDiagnostic("error", "timestamp_order", f"Segment {index + 1} starts before the previous segment.")
@@ -63,6 +79,48 @@ def validate_transcript(
                     f"Segment {index + 1} ends at {segment.end:.2f}s beyond media duration {media_duration:.2f}s.",
                 )
             )
+
+    if media_duration is not None:
+        duration = max(0.0, float(media_duration))
+        clamped_segments = []
+        for segment in segments:
+            start = min(max(0.0, segment.start), duration)
+            end = max(start, min(max(0.0, segment.end), duration))
+            clamped_segments.append(TranscriptSegment(start, end, segment.speaker, segment.text))
+        segments = tuple(clamped_segments)
+
+    if segments and media_duration is not None and media_duration >= 30:
+        tail_gap = max(0.0, media_duration - segments[-1].end)
+        coverage = segments[-1].end / media_duration if media_duration > 0 else 1.0
+        if tail_gap >= 30.0 and coverage < 0.75:
+            diagnostics.append(
+                TranscriptDiagnostic(
+                    "warning",
+                    "possible_early_stop",
+                    f"The final segment ends {tail_gap:.1f}s before the media ends; generation may have stopped early.",
+                )
+            )
+
+    normalized = [re.sub(r"\s+", " ", segment.text).strip().casefold() for segment in segments]
+    repeated = Counter(item for item in normalized if len(item) >= 4)
+    repeated_count = max(repeated.values(), default=0)
+    if repeated_count >= 3 and repeated_count / max(len(normalized), 1) >= 0.25:
+        diagnostics.append(
+            TranscriptDiagnostic(
+                "warning",
+                "repeated_text",
+                "The same transcript text appears repeatedly; inspect the result for a generation loop.",
+            )
+        )
+
+    if audio_rms is not None and audio_rms < 1e-4 and segments:
+        diagnostics.append(
+            TranscriptDiagnostic(
+                "warning",
+                "possible_silence_hallucination",
+                "The input energy is near silence but the model returned speech; treat the transcript as unreliable.",
+            )
+        )
 
     possibly_truncated = bool(
         generated_tokens is not None

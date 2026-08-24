@@ -7,6 +7,8 @@
       "precision": "auto",
       "release_after_run": false,
       "verify_hashes": false,
+      "memory_policy": "keep",
+      "attention_implementation": "auto",
       "custom_model_path": ""
     }
   },
@@ -15,6 +17,7 @@
     "class_type": "T8_MOSS_PromptHotwords",
     "inputs": {
       "base_prompt": "请将音频转写为文本，每段包含起止时间戳与说话人编号。",
+      "preset_id": "zh_meeting",
       "hotwords": "OpenMOSS, ComfyUI, T8star-Aix",
       "language_hint": "中文",
       "strict_format": true
@@ -22,7 +25,7 @@
   },
   "4": {
     "class_type": "T8_MOSS_TranscribeDiarize",
-    "inputs": {"model": ["1", 0], "audio": ["2", 0], "max_new_tokens": 0, "prompt": ["3", 0]}
+    "inputs": {"model": ["1", 0], "audio": ["2", 0], "max_new_tokens": 0, "prompt": ["3", 0], "silence_policy": "warn"}
   },
   "5": {
     "class_type": "T8_MOSS_SubtitleExport",
@@ -31,7 +34,9 @@
       "speaker_names_json": "{\"S01\": \"主持人\", \"S02\": \"嘉宾\"}",
       "show_speaker": true,
       "filename_prefix": "moss_meeting",
-      "write_files": true
+      "write_files": true,
+      "chunk_id": "meeting-part1",
+      "cross_chunk_speaker_map_json": "{}"
     }
   }
 }

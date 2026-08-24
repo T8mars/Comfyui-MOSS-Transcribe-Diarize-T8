@@ -78,7 +78,7 @@ def export_ass(
         [
             "[Script Info]",
             "ScriptType: v4.00+",
-            "WrapStyle: 2",
+            "WrapStyle: 0",
             "ScaledBorderAndShadow: yes",
             f"PlayResX: {video_width}",
             f"PlayResY: {video_height}",
