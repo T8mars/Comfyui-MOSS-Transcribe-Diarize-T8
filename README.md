@@ -1,5 +1,7 @@
 # comfyui-MOSS-Transcribe-Diarize-T8
 
+**简体中文** | [English](README_EN.md)
+
 由 T8star-Aix 维护的 MOSS Transcribe Diarize ComfyUI V3 节点包。节点执行本地离线推理，提供转写、说话人编号、句/段级时间戳、结构校验以及 JSON/TXT/SRT/ASS 导出。推理过程支持 ComfyUI 进度回传和队列中断。
 
 ## 安装
