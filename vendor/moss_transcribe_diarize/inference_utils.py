@@ -156,7 +156,7 @@ def load_audio_item(audio: str | np.ndarray, sampling_rate: int) -> np.ndarray:
         return load_audio_av(audio, sampling_rate=sampling_rate)
     try:
         return load_audio(audio, sampling_rate=sampling_rate)
-    except Exception as exc:
+    except Exception:
         if not isinstance(audio, str):
             raise
         try:

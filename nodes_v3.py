@@ -5,14 +5,16 @@ import logging
 import platform
 import re
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import torch
 from comfy_api.latest import ComfyExtension, io
 
 from .runtime.inference import build_prompt, run_transcription
+from .runtime.long_audio import transcribe_long_audio
 from .runtime.model_cache import MODEL_CACHE
+from .runtime.quality import evaluate_quality
 from .runtime.types import ModelHandle, PromptConfig, TranscriptPayload
 from .services.model_store import (
     MISSING_MODEL_OPTION,
@@ -24,6 +26,7 @@ from .services.model_store import (
     validate_model_dir,
 )
 from .vendor.moss_transcribe_diarize.inference_utils import DEFAULT_PROMPT
+from .vendor.moss_transcribe_diarize.audio_adapter import TARGET_SAMPLE_RATE, comfy_audio_to_numpy
 from .vendor.moss_transcribe_diarize.attention import ATTENTION_IMPLEMENTATIONS, AUTO_ATTENTION_IMPLEMENTATION
 from .vendor.moss_transcribe_diarize.prompt_presets import PROMPT_PRESETS
 from .vendor.moss_transcribe_diarize.speaker_mapping import resolve_speaker_names
@@ -37,6 +40,7 @@ CATEGORY = "T8star-Aix/Audio/MOSS Transcribe Diarize"
 ModelType = io.Custom("T8_MOSS_TRANSCRIBE_MODEL")
 PromptType = io.Custom("T8_MOSS_PROMPT")
 TranscriptType = io.Custom("T8_MOSS_TRANSCRIPT")
+SubtitleStyleType = io.Custom("T8_MOSS_SUBTITLE_STYLE")
 
 
 def _device_options() -> list[str]:
@@ -125,7 +129,7 @@ class T8MossModelLoader(io.ComfyNode):
                     options=[AUTO_ATTENTION_IMPLEMENTATION, *ATTENTION_IMPLEMENTATIONS],
                     default=AUTO_ATTENTION_IMPLEMENTATION,
                     advanced=True,
-                    tooltip="auto 会显式尝试 Flash Attention、SDPA，最后才回退 eager；实际选择写入转写元数据。",
+                    tooltip="auto 跟随上游/Transformers 默认并记录实际结果；显式后端失败时直接报错，不静默回退。",
                 ),
                 io.String.Input(
                     "custom_model_path",
@@ -316,6 +320,30 @@ class T8MossTranscribeDiarize(io.ComfyNode):
                     default="warn",
                     tooltip="warn 继续并给出诊断；reject 在载入模型前拒绝；ignore 仅记录检测结果。",
                 ),
+                io.Combo.Input(
+                    "preflight_backend",
+                    display_name="语音预检后端",
+                    options=["webrtc", "energy"],
+                    default="webrtc",
+                    advanced=True,
+                    tooltip="webrtc 检测真实语音帧；energy 仅按能量判断，兼容旧环境。",
+                ),
+                io.Int.Input(
+                    "vad_aggressiveness",
+                    display_name="VAD 严格度",
+                    default=2,
+                    min=0,
+                    max=3,
+                    advanced=True,
+                ),
+                io.Combo.Input(
+                    "retry_policy",
+                    display_name="自动重试",
+                    options=["never", "invalid_format", "quality_failure"],
+                    default="invalid_format",
+                    advanced=True,
+                    tooltip="格式无效或缺失说话人标签时，可用更严格提示自动重试一次。",
+                ),
             ],
             outputs=[
                 io.Audio.Output("audio", display_name="原音频透传"),
@@ -335,6 +363,9 @@ class T8MossTranscribeDiarize(io.ComfyNode):
         max_new_tokens: int,
         prompt: PromptConfig | None = None,
         silence_policy: str = "warn",
+        preflight_backend: str = "webrtc",
+        vad_aggressiveness: int = 2,
+        retry_policy: str = "invalid_format",
     ) -> io.NodeOutput:
         payload = run_transcription(
             model,
@@ -342,9 +373,168 @@ class T8MossTranscribeDiarize(io.ComfyNode):
             prompt,
             max_new_tokens=int(max_new_tokens),
             silence_policy=silence_policy,
+            preflight_backend=preflight_backend,
+            vad_aggressiveness=int(vad_aggressiveness),
+            retry_policy=retry_policy,
         )
         srt, ass = _subtitle_outputs(payload)
         return io.NodeOutput(audio, payload.raw_text, _transcript_json(payload), srt, ass, payload)
+
+
+class T8MossSmartLongAudio(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="T8_MOSS_SmartLongAudio",
+            display_name="MOSS 智能长音频转写 · T8star-Aix",
+            category=CATEGORY,
+            essentials_category="Audio",
+            search_aliases=["long audio", "VAD chunk", "resume transcription", "长音频", "断点续跑"],
+            description="按 VAD 静音边界安全分片、重叠去重、分片说话人隔离，并支持中断后从检查点续跑。",
+            inputs=[
+                ModelType.Input("model", display_name="MOSS 模型"),
+                io.Audio.Input("audio", display_name="长音频"),
+                io.Int.Input(
+                    "max_new_tokens_per_chunk",
+                    display_name="每片最大新 token（0=自动）",
+                    default=0,
+                    min=0,
+                    max=65536,
+                    step=256,
+                ),
+                PromptType.Input("prompt", display_name="提示词与热词", optional=True),
+                io.Float.Input(
+                    "target_chunk_minutes",
+                    display_name="目标分片分钟",
+                    default=8.0,
+                    min=1.0,
+                    max=30.0,
+                    step=0.5,
+                ),
+                io.Float.Input(
+                    "max_chunk_minutes",
+                    display_name="最长分片分钟",
+                    default=10.0,
+                    min=1.0,
+                    max=40.0,
+                    step=0.5,
+                ),
+                io.Float.Input(
+                    "overlap_seconds",
+                    display_name="分片重叠秒数",
+                    default=1.0,
+                    min=0.0,
+                    max=10.0,
+                    step=0.25,
+                ),
+                io.Combo.Input(
+                    "split_strategy",
+                    display_name="分片策略",
+                    options=["vad", "fixed"],
+                    default="vad",
+                ),
+                io.Combo.Input(
+                    "silence_policy",
+                    display_name="无语音分片策略",
+                    options=["warn", "reject", "ignore"],
+                    default="warn",
+                ),
+                io.Int.Input(
+                    "vad_aggressiveness",
+                    display_name="VAD 严格度",
+                    default=2,
+                    min=0,
+                    max=3,
+                ),
+                io.Combo.Input(
+                    "retry_policy",
+                    display_name="失败自动重试",
+                    options=["never", "invalid_format", "quality_failure"],
+                    default="quality_failure",
+                ),
+                io.Combo.Input(
+                    "checkpoint_mode",
+                    display_name="检查点模式",
+                    options=["off", "read_write", "restart"],
+                    default="read_write",
+                    tooltip="read_write 自动续跑；restart 忽略并覆盖旧检查点；off 不写磁盘。",
+                ),
+                io.String.Input(
+                    "checkpoint_id",
+                    display_name="检查点名称（空=音频指纹）",
+                    default="",
+                    optional=True,
+                    advanced=True,
+                ),
+            ],
+            outputs=[
+                io.Audio.Output("audio", display_name="原音频透传"),
+                io.String.Output("raw_text", display_name="合并原始文本"),
+                io.String.Output("transcript_json", display_name="结构化 JSON"),
+                io.String.Output("srt", display_name="SRT 字幕"),
+                io.String.Output("ass", display_name="ASS 字幕"),
+                TranscriptType.Output("transcript", display_name="MOSS_TRANSCRIPT"),
+                io.String.Output("chunk_report", display_name="分片报告 JSON"),
+            ],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        model: ModelHandle,
+        audio: dict,
+        max_new_tokens_per_chunk: int,
+        target_chunk_minutes: float,
+        max_chunk_minutes: float,
+        overlap_seconds: float,
+        split_strategy: str,
+        silence_policy: str,
+        vad_aggressiveness: int,
+        retry_policy: str,
+        checkpoint_mode: str,
+        prompt: PromptConfig | None = None,
+        checkpoint_id: str = "",
+    ) -> io.NodeOutput:
+        if float(target_chunk_minutes) > float(max_chunk_minutes):
+            raise ValueError("目标分片分钟不能大于最长分片分钟。")
+        samples = comfy_audio_to_numpy(audio, TARGET_SAMPLE_RATE)
+        checkpoint_dir = None
+        if checkpoint_mode != "off":
+            import folder_paths
+
+            checkpoint_dir = (
+                Path(folder_paths.get_output_directory()).resolve()
+                / "moss_transcribe_diarize"
+                / "checkpoints"
+            )
+        payload, report = transcribe_long_audio(
+            model,
+            samples,
+            prompt,
+            sample_rate=TARGET_SAMPLE_RATE,
+            max_new_tokens_per_chunk=int(max_new_tokens_per_chunk),
+            target_seconds=float(target_chunk_minutes) * 60.0,
+            max_seconds=float(max_chunk_minutes) * 60.0,
+            overlap_seconds=float(overlap_seconds),
+            split_strategy=split_strategy,
+            silence_policy=silence_policy,
+            preflight_backend="webrtc",
+            vad_aggressiveness=int(vad_aggressiveness),
+            retry_policy=retry_policy,
+            checkpoint_mode=checkpoint_mode,
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_id=checkpoint_id,
+        )
+        srt, ass = _subtitle_outputs(payload)
+        return io.NodeOutput(
+            audio,
+            payload.raw_text,
+            _transcript_json(payload),
+            srt,
+            ass,
+            payload,
+            json.dumps(report, ensure_ascii=False, indent=2),
+        )
 
 
 class T8MossTranscriptValidate(io.ComfyNode):
@@ -426,6 +616,137 @@ class T8MossTranscriptValidate(io.ComfyNode):
         )
 
 
+class T8MossQualityGate(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="T8_MOSS_QualityGate",
+            display_name="MOSS 转写质量门 · T8star-Aix",
+            category=CATEGORY,
+            search_aliases=["quality gate", "coverage", "hallucination", "质量检查"],
+            description="按格式错误、尾部覆盖、未知说话人、重复文本和截断风险输出可用性布尔值。",
+            inputs=[
+                TranscriptType.Input("transcript", display_name="MOSS_TRANSCRIPT"),
+                io.Float.Input(
+                    "min_end_coverage",
+                    display_name="最低尾部覆盖率",
+                    default=0.75,
+                    min=0.0,
+                    max=1.0,
+                    step=0.05,
+                ),
+                io.Float.Input(
+                    "max_unknown_speaker_ratio",
+                    display_name="未知说话人比例上限",
+                    default=0.50,
+                    min=0.0,
+                    max=1.0,
+                    step=0.05,
+                ),
+                io.Boolean.Input("reject_repetition", display_name="拒绝重复循环", default=True),
+                io.Boolean.Input("reject_truncation", display_name="拒绝疑似截断", default=True),
+            ],
+            outputs=[
+                TranscriptType.Output("transcript", display_name="已评估 MOSS_TRANSCRIPT"),
+                io.Boolean.Output("is_usable", display_name="结果可用"),
+                io.String.Output("quality_report", display_name="质量报告 JSON"),
+            ],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        transcript: TranscriptPayload,
+        min_end_coverage: float,
+        max_unknown_speaker_ratio: float,
+        reject_repetition: bool,
+        reject_truncation: bool,
+    ) -> io.NodeOutput:
+        report = evaluate_quality(
+            transcript,
+            min_end_coverage=float(min_end_coverage),
+            max_unknown_speaker_ratio=float(max_unknown_speaker_ratio),
+            reject_repetition=bool(reject_repetition),
+            reject_truncation=bool(reject_truncation),
+        )
+        payload = TranscriptPayload(
+            raw_text=transcript.raw_text,
+            segments=transcript.segments,
+            diagnostics=transcript.diagnostics,
+            metadata={**transcript.metadata, "quality_gate": report},
+        )
+        return io.NodeOutput(payload, bool(report["usable"]), json.dumps(report, ensure_ascii=False, indent=2))
+
+
+class T8MossSubtitleStyle(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="T8_MOSS_SubtitleStyle",
+            display_name="MOSS 字幕样式 · T8star-Aix",
+            category=CATEGORY,
+            search_aliases=["ASS style", "subtitle style", "字幕样式", "说话人颜色"],
+            description="集中配置 ASS 分辨率、字体、布局、描边和说话人配色；可复用到多个字幕导出节点。",
+            inputs=[
+                io.String.Input("font_name", display_name="字体名称", default="Noto Sans CJK SC"),
+                io.Int.Input(
+                    "font_size",
+                    display_name="字号（0=按分辨率自动）",
+                    default=0,
+                    min=0,
+                    max=512,
+                    step=1,
+                ),
+                io.Int.Input("alignment", display_name="ASS 对齐（1-9）", default=2, min=1, max=9, step=1),
+                io.Int.Input("margin_v", display_name="垂直边距", default=56, min=0, max=2160, step=1),
+                io.Boolean.Input("speaker_colors", display_name="按说话人配色", default=True),
+                io.String.Input("primary_color", display_name="主色（ASS BGR）", default="&H00FFFFFF"),
+                io.String.Input("outline_color", display_name="描边色（ASS BGR）", default="&H00000000"),
+                io.String.Input("back_color", display_name="背景色（ASS BGR）", default="&H64000000"),
+                io.Int.Input("outline", display_name="描边宽度", default=3, min=0, max=20, step=1),
+                io.Int.Input("shadow", display_name="阴影宽度", default=1, min=0, max=20, step=1),
+                io.Int.Input("video_width", display_name="视频宽度", default=1920, min=16, max=16384, step=2),
+                io.Int.Input("video_height", display_name="视频高度", default=1080, min=16, max=16384, step=2),
+            ],
+            outputs=[
+                SubtitleStyleType.Output("style", display_name="MOSS 字幕样式"),
+                io.String.Output("style_json", display_name="样式 JSON"),
+            ],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        font_name: str,
+        font_size: int,
+        alignment: int,
+        margin_v: int,
+        speaker_colors: bool,
+        primary_color: str,
+        outline_color: str,
+        back_color: str,
+        outline: int,
+        shadow: int,
+        video_width: int,
+        video_height: int,
+    ) -> io.NodeOutput:
+        style = SubtitleStyle(
+            font_name=str(font_name).strip() or "Noto Sans CJK SC",
+            font_size=None if int(font_size) <= 0 else int(font_size),
+            alignment=int(alignment),
+            margin_v=int(margin_v),
+            speaker_colors=bool(speaker_colors),
+            primary_color=str(primary_color),
+            outline_color=str(outline_color),
+            back_color=str(back_color),
+            outline=int(outline),
+            shadow=int(shadow),
+            video_width=int(video_width),
+            video_height=int(video_height),
+        )
+        return io.NodeOutput(style, json.dumps(style.to_dict(), ensure_ascii=False, indent=2))
+
+
 class T8MossSubtitleExport(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -458,6 +779,7 @@ class T8MossSubtitleExport(io.ComfyNode):
                     dynamic_prompts=False,
                     advanced=True,
                 ),
+                SubtitleStyleType.Input("style", display_name="字幕样式（可选）", optional=True),
             ],
             outputs=[
                 io.String.Output("json", display_name="JSON 内容"),
@@ -478,6 +800,7 @@ class T8MossSubtitleExport(io.ComfyNode):
         write_files: bool,
         chunk_id: str = "",
         cross_chunk_speaker_map_json: str = "{}",
+        style: SubtitleStyle | None = None,
     ) -> io.NodeOutput:
         try:
             names = json.loads(speaker_names_json or "{}")
@@ -493,7 +816,11 @@ class T8MossSubtitleExport(io.ComfyNode):
             raise ValueError("跨分片说话人映射必须是 JSON 对象。")
         names = resolve_speaker_names(names, cross_chunk_mapping, chunk_id=chunk_id)
         segments = _subtitle_segments(transcript)
-        style = SubtitleStyle(show_speaker=bool(show_speaker), speaker_names=names or None)
+        style = replace(
+            style or SubtitleStyle(),
+            show_speaker=bool(show_speaker),
+            speaker_names=names or None,
+        )
         json_text = export_json(segments)
         txt_text = "\n".join(
             f"[{item.start:.2f}][{names.get(item.speaker, item.speaker)}]{item.text}[{item.end:.2f}]" for item in segments
@@ -601,7 +928,10 @@ class T8MossExtension(ComfyExtension):
             T8MossModelLoader,
             T8MossPromptHotwords,
             T8MossTranscribeDiarize,
+            T8MossSmartLongAudio,
             T8MossTranscriptValidate,
+            T8MossQualityGate,
+            T8MossSubtitleStyle,
             T8MossSubtitleExport,
             T8MossEnvironmentRelease,
         ]
@@ -616,7 +946,10 @@ __all__ = [
     "T8MossExtension",
     "T8MossModelLoader",
     "T8MossPromptHotwords",
+    "T8MossQualityGate",
+    "T8MossSmartLongAudio",
     "T8MossSubtitleExport",
+    "T8MossSubtitleStyle",
     "T8MossTranscriptValidate",
     "T8MossTranscribeDiarize",
     "comfy_entrypoint",

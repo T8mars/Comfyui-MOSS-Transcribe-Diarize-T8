@@ -24,17 +24,22 @@
     }
   },
   "4": {
-    "class_type": "T8_MOSS_TranscribeDiarize",
-    "inputs": {"model": ["1", 0], "audio": ["2", 0], "max_new_tokens": 0, "prompt": ["3", 0], "silence_policy": "warn"}
+    "class_type": "T8_MOSS_SmartLongAudio",
+    "inputs": {
+      "model": ["1", 0], "audio": ["2", 0], "max_new_tokens_per_chunk": 0, "prompt": ["3", 0],
+      "target_chunk_minutes": 8.0, "max_chunk_minutes": 10.0, "overlap_seconds": 1.0,
+      "split_strategy": "vad", "silence_policy": "warn", "vad_aggressiveness": 2,
+      "retry_policy": "quality_failure", "checkpoint_mode": "read_write", "checkpoint_id": "long-meeting"
+    }
   },
   "5": {
-    "class_type": "T8_MOSS_TranscriptValidate",
+    "class_type": "T8_MOSS_QualityGate",
     "inputs": {
-      "raw_text": "",
-      "media_duration_seconds": 0,
-      "generated_tokens": 0,
-      "max_new_tokens": 0,
-      "transcript": ["4", 5]
+      "transcript": ["4", 5],
+      "min_end_coverage": 0.75,
+      "max_unknown_speaker_ratio": 0.5,
+      "reject_repetition": true,
+      "reject_truncation": true
     }
   },
   "6": {

@@ -24,10 +24,16 @@ def test_long_audio_ui_and_api_workflows_include_diagnostics():
     api = json.loads((PLUGIN_ROOT / "example_workflows" / "api" / "02_long_audio_diagnostics.json").read_text(encoding="utf-8"))
     assert ui["last_node_id"] == max(node["id"] for node in ui["nodes"])
     assert ui["last_link_id"] == len(ui["links"])
-    required = {"T8_MOSS_TranscriptValidate", "T8_MOSS_EnvironmentRelease", "T8_MOSS_SubtitleExport"}
+    required = {
+        "T8_MOSS_SmartLongAudio",
+        "T8_MOSS_QualityGate",
+        "T8_MOSS_EnvironmentRelease",
+        "T8_MOSS_SubtitleExport",
+    }
     assert {node["type"] for node in ui["nodes"]}.issuperset(required)
     assert {node["class_type"] for node in api.values()}.issuperset(required)
-    transcribe = next(node for node in api.values() if node["class_type"] == "T8_MOSS_TranscribeDiarize")
-    validator = next(node for node in api.values() if node["class_type"] == "T8_MOSS_TranscriptValidate")
-    assert transcribe["inputs"]["max_new_tokens"] == 0
-    assert validator["inputs"]["transcript"] == ["4", 5]
+    transcribe = next(node for node in api.values() if node["class_type"] == "T8_MOSS_SmartLongAudio")
+    quality_gate = next(node for node in api.values() if node["class_type"] == "T8_MOSS_QualityGate")
+    assert transcribe["inputs"]["max_new_tokens_per_chunk"] == 0
+    assert transcribe["inputs"]["checkpoint_mode"] == "read_write"
+    assert quality_gate["inputs"]["transcript"] == ["4", 5]

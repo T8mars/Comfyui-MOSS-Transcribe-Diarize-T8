@@ -1,6 +1,6 @@
 {
-  "last_node_id": 7,
-  "last_link_id": 6,
+  "last_node_id": 8,
+  "last_link_id": 7,
   "nodes": [
     {
       "id": 1,
@@ -17,13 +17,14 @@
         {"name": "release_after_run", "type": "BOOLEAN", "widget": {"name": "release_after_run"}, "link": null},
         {"name": "verify_hashes", "type": "BOOLEAN", "widget": {"name": "verify_hashes"}, "link": null},
         {"name": "memory_policy", "type": "COMBO", "widget": {"name": "memory_policy"}, "link": null},
+        {"name": "attention_implementation", "type": "COMBO", "widget": {"name": "attention_implementation"}, "link": null},
         {"name": "custom_model_path", "type": "STRING", "widget": {"name": "custom_model_path"}, "link": null, "shape": 7}
       ],
       "outputs": [
-        {"name": "model", "type": "T8_MOSS_TRANSCRIBE_MODEL", "links": [1, 6]},
+        {"name": "model", "type": "T8_MOSS_TRANSCRIBE_MODEL", "links": [1, 5]},
         {"name": "model_info", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_ModelLoader", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
+      "properties": {"Node name for S&R": "T8_MOSS_ModelLoader", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
       "widgets_values": ["MOSS-Transcribe-Diarize", "auto", "auto", false, false, "release_under_pressure", "auto", ""]
     },
     {
@@ -58,12 +59,12 @@
         {"name": "prompt", "type": "T8_MOSS_PROMPT", "links": [3]},
         {"name": "prompt_text", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_PromptHotwords", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
+      "properties": {"Node name for S&R": "T8_MOSS_PromptHotwords", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
       "widgets_values": ["请将长音频转写为文本，每段包含起止时间戳与说话人编号。", "zh_meeting", "OpenMOSS, ComfyUI, T8star-Aix", "中文", true]
     },
     {
       "id": 4,
-      "type": "T8_MOSS_TranscribeDiarize",
+      "type": "T8_MOSS_SmartLongAudio",
       "pos": [1010, 120],
       "size": [480, 300],
       "flags": {},
@@ -72,9 +73,17 @@
       "inputs": [
         {"name": "model", "type": "T8_MOSS_TRANSCRIBE_MODEL", "link": 1},
         {"name": "audio", "type": "AUDIO", "link": 2},
-        {"name": "max_new_tokens", "type": "INT", "widget": {"name": "max_new_tokens"}, "link": null},
+        {"name": "max_new_tokens_per_chunk", "type": "INT", "widget": {"name": "max_new_tokens_per_chunk"}, "link": null},
         {"name": "prompt", "type": "T8_MOSS_PROMPT", "link": 3, "shape": 7}
+        ,{"name": "target_chunk_minutes", "type": "FLOAT", "widget": {"name": "target_chunk_minutes"}, "link": null}
+        ,{"name": "max_chunk_minutes", "type": "FLOAT", "widget": {"name": "max_chunk_minutes"}, "link": null}
+        ,{"name": "overlap_seconds", "type": "FLOAT", "widget": {"name": "overlap_seconds"}, "link": null}
+        ,{"name": "split_strategy", "type": "COMBO", "widget": {"name": "split_strategy"}, "link": null}
         ,{"name": "silence_policy", "type": "COMBO", "widget": {"name": "silence_policy"}, "link": null}
+        ,{"name": "vad_aggressiveness", "type": "INT", "widget": {"name": "vad_aggressiveness"}, "link": null}
+        ,{"name": "retry_policy", "type": "COMBO", "widget": {"name": "retry_policy"}, "link": null}
+        ,{"name": "checkpoint_mode", "type": "COMBO", "widget": {"name": "checkpoint_mode"}, "link": null}
+        ,{"name": "checkpoint_id", "type": "STRING", "widget": {"name": "checkpoint_id"}, "link": null}
       ],
       "outputs": [
         {"name": "audio", "type": "AUDIO", "links": []},
@@ -82,10 +91,11 @@
         {"name": "transcript_json", "type": "STRING", "links": []},
         {"name": "srt", "type": "STRING", "links": []},
         {"name": "ass", "type": "STRING", "links": []},
-        {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "links": [4]}
+        {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "links": [4]},
+        {"name": "chunk_report", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_TranscribeDiarize", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
-      "widgets_values": [0, "warn"]
+      "properties": {"Node name for S&R": "T8_MOSS_SmartLongAudio", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
+      "widgets_values": [0, 8.0, 10.0, 1.0, "vad", "warn", 2, "quality_failure", "read_write", ""]
     },
     {
       "id": 5,
@@ -103,11 +113,11 @@
         {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "link": 4, "shape": 7}
       ],
       "outputs": [
-        {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "links": [5]},
+        {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "links": [6]},
         {"name": "report_json", "type": "STRING", "links": []},
         {"name": "segments_json", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_TranscriptValidate", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
+      "properties": {"Node name for S&R": "T8_MOSS_TranscriptValidate", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
       "widgets_values": ["", 0, 0, 0]
     },
     {
@@ -119,7 +129,7 @@
       "order": 5,
       "mode": 0,
       "inputs": [
-        {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "link": 5},
+        {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "link": 7},
         {"name": "speaker_names_json", "type": "STRING", "widget": {"name": "speaker_names_json"}, "link": null},
         {"name": "show_speaker", "type": "BOOLEAN", "widget": {"name": "show_speaker"}, "link": null},
         {"name": "filename_prefix", "type": "STRING", "widget": {"name": "filename_prefix"}, "link": null},
@@ -134,7 +144,7 @@
         {"name": "ass", "type": "STRING", "links": []},
         {"name": "files", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_SubtitleExport", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
+      "properties": {"Node name for S&R": "T8_MOSS_SubtitleExport", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
       "widgets_values": ["{}", true, "moss_long_audio_checked", true, "long-part1", "{}"]
     },
     {
@@ -147,11 +157,34 @@
       "mode": 0,
       "inputs": [
         {"name": "action", "type": "COMBO", "widget": {"name": "action"}, "link": null},
-        {"name": "model", "type": "T8_MOSS_TRANSCRIBE_MODEL", "link": 6, "shape": 7}
+        {"name": "model", "type": "T8_MOSS_TRANSCRIBE_MODEL", "link": 5, "shape": 7}
       ],
       "outputs": [{"name": "environment_report", "type": "STRING", "links": []}],
-      "properties": {"Node name for S&R": "T8_MOSS_EnvironmentRelease", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.2.1"},
+      "properties": {"Node name for S&R": "T8_MOSS_EnvironmentRelease", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
       "widgets_values": ["report_only"]
+    },
+    {
+      "id": 8,
+      "type": "T8_MOSS_QualityGate",
+      "pos": [2100, 470],
+      "size": [460, 280],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "link": 6},
+        {"name": "min_end_coverage", "type": "FLOAT", "widget": {"name": "min_end_coverage"}, "link": null},
+        {"name": "max_unknown_speaker_ratio", "type": "FLOAT", "widget": {"name": "max_unknown_speaker_ratio"}, "link": null},
+        {"name": "reject_repetition", "type": "BOOLEAN", "widget": {"name": "reject_repetition"}, "link": null},
+        {"name": "reject_truncation", "type": "BOOLEAN", "widget": {"name": "reject_truncation"}, "link": null}
+      ],
+      "outputs": [
+        {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "links": [7]},
+        {"name": "is_usable", "type": "BOOLEAN", "links": []},
+        {"name": "quality_report", "type": "STRING", "links": []}
+      ],
+      "properties": {"Node name for S&R": "T8_MOSS_QualityGate", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
+      "widgets_values": [0.75, 0.5, true, true]
     }
   ],
   "links": [
@@ -159,8 +192,9 @@
     [2, 2, 0, 4, 1, "AUDIO"],
     [3, 3, 0, 4, 3, "T8_MOSS_PROMPT"],
     [4, 4, 5, 5, 4, "T8_MOSS_TRANSCRIPT"],
-    [5, 5, 0, 6, 0, "T8_MOSS_TRANSCRIPT"],
-    [6, 1, 0, 7, 1, "T8_MOSS_TRANSCRIBE_MODEL"]
+    [5, 1, 0, 7, 1, "T8_MOSS_TRANSCRIBE_MODEL"],
+    [6, 5, 0, 8, 0, "T8_MOSS_TRANSCRIPT"],
+    [7, 8, 0, 6, 0, "T8_MOSS_TRANSCRIPT"]
   ],
   "groups": [{"title": "MOSS 长音频诊断 · T8star-Aix", "bounding": [-40, -60, 2680, 760], "color": "#8a5f9e", "font_size": 24, "flags": {}}],
   "config": {},

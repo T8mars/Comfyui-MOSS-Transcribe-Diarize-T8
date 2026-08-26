@@ -35,14 +35,23 @@ def main() -> None:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--max-new-tokens", type=int, default=0, help="0 uses the duration-based automatic budget.")
+    parser.add_argument("--smart-long", action="store_true", help="Exercise smart long-audio chunking and merge.")
+    parser.add_argument("--target-chunk-seconds", type=float, default=480.0)
+    parser.add_argument("--max-chunk-seconds", type=float, default=600.0)
+    parser.add_argument("--overlap-seconds", type=float, default=1.0)
+    parser.add_argument("--retry-policy", choices=("never", "invalid_format", "quality_failure"), default="never")
+    parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None, help="Optional JSON result path.")
     parser.add_argument("--summary-only", action="store_true")
     args = parser.parse_args()
     load_package()
     inference = importlib.import_module(f"{PACKAGE_NAME}.runtime.inference")
+    long_audio = importlib.import_module(f"{PACKAGE_NAME}.runtime.long_audio")
     model_cache = importlib.import_module(f"{PACKAGE_NAME}.runtime.model_cache")
     types = importlib.import_module(f"{PACKAGE_NAME}.runtime.types")
+    audio_adapter = importlib.import_module(f"{PACKAGE_NAME}.vendor.moss_transcribe_diarize.audio_adapter")
     waveform, sample_rate = torchaudio.load(str(args.audio))
+    comfy_audio = {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate}
     handle = types.ModelHandle(args.model.resolve(), args.device, "auto")
     cuda_index = (
         int(args.device.split(":", 1)[1]) if ":" in args.device else torch.cuda.current_device()
@@ -51,12 +60,30 @@ def main() -> None:
         with torch.cuda.device(cuda_index):
             torch.cuda.reset_peak_memory_stats()
     started = time.perf_counter()
-    payload = inference.run_transcription(
-        handle,
-        {"waveform": waveform.unsqueeze(0), "sample_rate": sample_rate},
-        None,
-        max_new_tokens=args.max_new_tokens,
-    )
+    chunk_report = None
+    if args.smart_long:
+        samples = audio_adapter.comfy_audio_to_numpy(comfy_audio, audio_adapter.TARGET_SAMPLE_RATE)
+        payload, chunk_report = long_audio.transcribe_long_audio(
+            handle,
+            samples,
+            None,
+            max_new_tokens_per_chunk=args.max_new_tokens,
+            target_seconds=args.target_chunk_seconds,
+            max_seconds=args.max_chunk_seconds,
+            overlap_seconds=args.overlap_seconds,
+            split_strategy="vad",
+            retry_policy=args.retry_policy,
+            checkpoint_mode="read_write" if args.checkpoint_dir is not None else "off",
+            checkpoint_dir=args.checkpoint_dir,
+        )
+    else:
+        payload = inference.run_transcription(
+            handle,
+            comfy_audio,
+            None,
+            max_new_tokens=args.max_new_tokens,
+            retry_policy=args.retry_policy,
+        )
     elapsed = time.perf_counter() - started
     model_cache.MODEL_CACHE.release_all()
     result = payload.to_dict()
@@ -69,15 +96,27 @@ def main() -> None:
         "elapsed_seconds": round(elapsed, 3),
         "segment_count": len(payload.segments),
         "peak_vram_gb": peak_vram_gb,
+        "mode": "smart_long_audio" if args.smart_long else "single_pass",
     }
+    if chunk_report is not None:
+        result["smoke_test"]["chunk_count"] = chunk_report["chunk_count"]
+        result["smoke_test"]["resumed_chunks"] = chunk_report["resumed_chunks"]
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    chunk_metadata = [item.get("metadata", {}) for item in result["metadata"].get("chunks", [])]
+    generated_tokens = result["metadata"].get("generated_tokens")
+    max_new_tokens = result["metadata"].get("max_new_tokens")
+    possibly_truncated = result["metadata"].get("possibly_truncated")
+    if chunk_metadata:
+        generated_tokens = sum(int(item.get("generated_tokens") or 0) for item in chunk_metadata)
+        max_new_tokens = sum(int(item.get("max_new_tokens") or 0) for item in chunk_metadata)
+        possibly_truncated = any(bool(item.get("possibly_truncated")) for item in chunk_metadata)
     shown = result["smoke_test"] | {
         "audio_duration_seconds": result["metadata"]["audio_duration_seconds"],
-        "generated_tokens": result["metadata"]["generated_tokens"],
-        "max_new_tokens": result["metadata"]["max_new_tokens"],
-        "possibly_truncated": result["metadata"]["possibly_truncated"],
+        "generated_tokens": generated_tokens,
+        "max_new_tokens": max_new_tokens,
+        "possibly_truncated": possibly_truncated,
         "diagnostics": result["diagnostics"],
     }
     print(json.dumps(shown if args.summary_only else result, ensure_ascii=False, indent=2))

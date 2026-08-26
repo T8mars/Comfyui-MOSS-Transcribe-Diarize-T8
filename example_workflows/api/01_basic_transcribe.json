@@ -25,7 +25,19 @@
   },
   "4": {
     "class_type": "T8_MOSS_TranscribeDiarize",
-    "inputs": {"model": ["1", 0], "audio": ["2", 0], "max_new_tokens": 0, "prompt": ["3", 0], "silence_policy": "warn"}
+    "inputs": {
+      "model": ["1", 0], "audio": ["2", 0], "max_new_tokens": 0, "prompt": ["3", 0],
+      "silence_policy": "warn", "preflight_backend": "webrtc", "vad_aggressiveness": 2,
+      "retry_policy": "invalid_format"
+    }
+  },
+  "6": {
+    "class_type": "T8_MOSS_SubtitleStyle",
+    "inputs": {
+      "font_name": "Noto Sans CJK SC", "font_size": 0, "alignment": 2, "margin_v": 56,
+      "speaker_colors": true, "primary_color": "&H00FFFFFF", "outline_color": "&H00000000",
+      "back_color": "&H64000000", "outline": 3, "shadow": 1, "video_width": 1920, "video_height": 1080
+    }
   },
   "5": {
     "class_type": "T8_MOSS_SubtitleExport",
@@ -36,7 +48,8 @@
       "filename_prefix": "moss_meeting",
       "write_files": true,
       "chunk_id": "meeting-part1",
-      "cross_chunk_speaker_map_json": "{}"
+      "cross_chunk_speaker_map_json": "{}",
+      "style": ["6", 0]
     }
   }
 }

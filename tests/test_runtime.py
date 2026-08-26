@@ -51,7 +51,7 @@ def test_silence_rejects_before_model_cache_acquisition(monkeypatch, tmp_path: P
     monkeypatch.setattr(inference, "comfy_audio_to_numpy", lambda *_args: np.zeros(16000, dtype=np.float32))
     acquired = []
     monkeypatch.setattr(inference.MODEL_CACHE, "acquire", lambda _handle: acquired.append(True))
-    with pytest.raises(ValueError, match="静音预检已拒绝"):
+    with pytest.raises(ValueError, match="预检已拒绝推理"):
         inference.run_transcription(handle, {"waveform": None}, None, max_new_tokens=16, silence_policy="reject")
     assert acquired == []
 
@@ -109,13 +109,14 @@ def test_ui_workflows_reference_current_node_package_version():
             for node in payload.get("nodes", [])
             if node.get("properties", {}).get("cnr_id") == "comfyui-moss-transcribe-diarize-t8"
         }
-        assert versions == {"0.2.1"}, f"{path.name} has stale node versions: {versions}"
+        assert versions == {"0.3.0"}, f"{path.name} has stale node versions: {versions}"
 
 
 def test_manifest_is_pinned_to_reviewed_revisions():
     manifest = model_store.load_manifest()
     assert manifest["revision"] == "e8681d68e7042738ffca8ac8212bc8fcb1131ab8"
-    assert manifest["code_revision"] == "e607537b1b870475e7898969d40b864de8b691b6"
+    assert manifest["code_revision"] == "cde3c13af82c539f751b3e8063fd72aa52d5e970"
+    assert "never silently fall back" in manifest["integration_attention_policy"]
     assert manifest["files"]["model-00000-of-00001.safetensors"]["size"] == 1817113576
 
 
@@ -145,6 +146,44 @@ def test_comfy_callbacks_forward_progress_and_interrupt(monkeypatch):
     assert cancellation_callback() is False
     assert progress_updates == [(9, 64)]
     assert interrupt_checks == [True]
+
+
+def test_comfy_callbacks_prefer_native_v3_progress(monkeypatch):
+    latest = importlib.import_module("comfy_api.latest")
+    native_updates = []
+    legacy_updates = []
+
+    class FakeExecution:
+        def set_progress(self, value, total):
+            native_updates.append((value, total))
+
+    class FakeAPISync:
+        def __init__(self):
+            self.execution = FakeExecution()
+
+    class FakeProgressBar:
+        def __init__(self, _total):
+            pass
+
+        def update_absolute(self, value, total):
+            legacy_updates.append((value, total))
+
+    fake_comfy = types.ModuleType("comfy")
+    fake_utils = types.ModuleType("comfy.utils")
+    fake_management = types.ModuleType("comfy.model_management")
+    fake_utils.ProgressBar = FakeProgressBar
+    fake_management.throw_exception_if_processing_interrupted = lambda: None
+    fake_comfy.utils = fake_utils
+    fake_comfy.model_management = fake_management
+    monkeypatch.setattr(latest, "ComfyAPISync", FakeAPISync)
+    monkeypatch.setitem(sys.modules, "comfy", fake_comfy)
+    monkeypatch.setitem(sys.modules, "comfy.utils", fake_utils)
+    monkeypatch.setitem(sys.modules, "comfy.model_management", fake_management)
+
+    token_callback, _ = inference._comfy_runtime_callbacks(32)
+    token_callback(7)
+    assert native_updates == [(7, 32)]
+    assert legacy_updates == []
 
 
 def test_model_cache_normalizes_equivalent_cpu_precision(tmp_path: Path):

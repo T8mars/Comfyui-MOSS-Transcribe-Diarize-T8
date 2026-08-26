@@ -1,0 +1,119 @@
+{
+  "T8_MOSS_ModelLoader": {
+    "display_name": "MOSS 转写说话人模型加载器 · T8star-Aix",
+    "description": "发现并校验固定版本的 MOSS 模型，在转写时按需加载。",
+    "inputs": {
+      "model_name": { "name": "模型" },
+      "device": { "name": "推理设备" },
+      "precision": { "name": "精度" },
+      "release_after_run": { "name": "旧工作流：转写后释放" },
+      "verify_hashes": { "name": "完整 SHA-256 校验" },
+      "memory_policy": { "name": "显存驻留策略" },
+      "attention_implementation": { "name": "Attention 后端" },
+      "custom_model_path": { "name": "自定义模型绝对路径" }
+    },
+    "outputs": { "0": { "name": "MOSS 模型" }, "1": { "name": "模型信息" } }
+  },
+  "T8_MOSS_PromptHotwords": {
+    "display_name": "MOSS 提示词与热词 · T8star-Aix",
+    "description": "构建可复用的场景提示词、语言提示、热词和严格输出格式。",
+    "inputs": {
+      "base_prompt": { "name": "基础提示词" },
+      "preset_id": { "name": "场景预设" },
+      "hotwords": { "name": "热词" },
+      "language_hint": { "name": "语言提示" },
+      "strict_format": { "name": "强制严格格式" }
+    },
+    "outputs": { "0": { "name": "MOSS 提示词" }, "1": { "name": "最终提示词文本" } }
+  },
+  "T8_MOSS_TranscribeDiarize": {
+    "display_name": "MOSS 转写与说话人分离 · T8star-Aix",
+    "description": "单段音频转写，支持说话人分离、真实 VAD 预检、原生进度、取消和一次严格重试。",
+    "inputs": {
+      "model": { "name": "MOSS 模型" },
+      "audio": { "name": "音频" },
+      "max_new_tokens": { "name": "最大新 token 数" },
+      "prompt": { "name": "提示词（可选）" },
+      "silence_policy": { "name": "静音策略" },
+      "preflight_backend": { "name": "预检后端" },
+      "vad_aggressiveness": { "name": "VAD 激进度" },
+      "retry_policy": { "name": "严格重试策略" }
+    },
+    "outputs": {
+      "0": { "name": "音频" }, "1": { "name": "原始文本" }, "2": { "name": "转写 JSON" },
+      "3": { "name": "SRT" }, "4": { "name": "ASS" }, "5": { "name": "MOSS 转写对象" }
+    }
+  },
+  "T8_MOSS_SmartLongAudio": {
+    "display_name": "MOSS 智能长音频 · T8star-Aix",
+    "description": "按 VAD 静音边界切分长音频，重叠转写、边界去重，并支持断点续跑。",
+    "inputs": {
+      "model": { "name": "MOSS 模型" }, "audio": { "name": "长音频" },
+      "max_new_tokens_per_chunk": { "name": "每分片 token 上限" }, "prompt": { "name": "提示词（可选）" },
+      "target_chunk_minutes": { "name": "目标分片分钟数" }, "max_chunk_minutes": { "name": "最长分片分钟数" },
+      "overlap_seconds": { "name": "分片重叠秒数" }, "split_strategy": { "name": "切分策略" },
+      "silence_policy": { "name": "静音策略" }, "vad_aggressiveness": { "name": "VAD 激进度" },
+      "retry_policy": { "name": "严格重试策略" }, "checkpoint_mode": { "name": "断点模式" },
+      "checkpoint_id": { "name": "断点 ID" }
+    },
+    "outputs": {
+      "0": { "name": "音频" }, "1": { "name": "原始文本" }, "2": { "name": "转写 JSON" },
+      "3": { "name": "SRT" }, "4": { "name": "ASS" }, "5": { "name": "MOSS 转写对象" },
+      "6": { "name": "分片报告" }
+    }
+  },
+  "T8_MOSS_TranscriptValidate": {
+    "display_name": "MOSS 转写校验 · T8star-Aix",
+    "description": "解析标准时间戳/说话人格式并报告错误行、截断风险和说话人覆盖。",
+    "inputs": {
+      "raw_text": { "name": "模型原始文本" }, "media_duration_seconds": { "name": "媒体时长（秒）" },
+      "generated_tokens": { "name": "已生成 token" }, "max_new_tokens": { "name": "最大新 token 数" },
+      "transcript": { "name": "转写对象（可选）" }
+    },
+    "outputs": { "0": { "name": "已校验转写对象" }, "1": { "name": "校验报告 JSON" }, "2": { "name": "片段 JSON" } }
+  },
+  "T8_MOSS_QualityGate": {
+    "display_name": "MOSS 转写质量门 · T8star-Aix",
+    "description": "根据格式错误、尾部覆盖、未知说话人、文本重复和截断风险判断结果是否可用。",
+    "inputs": {
+      "transcript": { "name": "MOSS 转写对象" }, "min_end_coverage": { "name": "最低尾部覆盖率" },
+      "max_unknown_speaker_ratio": { "name": "未知说话人比例上限" },
+      "reject_repetition": { "name": "拒绝重复循环" }, "reject_truncation": { "name": "拒绝疑似截断" }
+    },
+    "outputs": { "0": { "name": "已评估转写对象" }, "1": { "name": "结果可用" }, "2": { "name": "质量报告 JSON" } }
+  },
+  "T8_MOSS_SubtitleStyle": {
+    "display_name": "MOSS 字幕样式 · T8star-Aix",
+    "description": "创建可复用的 ASS 字幕分辨率、字体、布局、描边和说话人配色。",
+    "inputs": {
+      "font_name": { "name": "字体名称" }, "font_size": { "name": "字号（0=自动）" },
+      "alignment": { "name": "ASS 对齐（1-9）" }, "margin_v": { "name": "垂直边距" },
+      "speaker_colors": { "name": "按说话人配色" }, "primary_color": { "name": "主色（ASS BGR）" },
+      "outline_color": { "name": "描边色（ASS BGR）" }, "back_color": { "name": "背景色（ASS BGR）" },
+      "outline": { "name": "描边宽度" }, "shadow": { "name": "阴影宽度" },
+      "video_width": { "name": "视频宽度" }, "video_height": { "name": "视频高度" }
+    },
+    "outputs": { "0": { "name": "MOSS 字幕样式" }, "1": { "name": "样式 JSON" } }
+  },
+  "T8_MOSS_SubtitleExport": {
+    "display_name": "MOSS 字幕导出 · T8star-Aix",
+    "description": "导出 JSON、TXT、SRT 和带样式的 ASS，可安全写入 ComfyUI/output。",
+    "inputs": {
+      "transcript": { "name": "MOSS 转写对象" }, "speaker_names_json": { "name": "说话人重命名 JSON" },
+      "show_speaker": { "name": "字幕显示说话人" }, "filename_prefix": { "name": "文件名前缀" },
+      "write_files": { "name": "写入 output 目录" }, "chunk_id": { "name": "分片 ID（可选）" },
+      "cross_chunk_speaker_map_json": { "name": "跨分片说话人映射 JSON" },
+      "style": { "name": "字幕样式（可选）" }
+    },
+    "outputs": {
+      "0": { "name": "JSON 内容" }, "1": { "name": "TXT 内容" }, "2": { "name": "SRT 内容" },
+      "3": { "name": "ASS 内容" }, "4": { "name": "导出文件路径 JSON" }
+    }
+  },
+  "T8_MOSS_EnvironmentRelease": {
+    "display_name": "MOSS 环境诊断与模型释放 · T8star-Aix",
+    "description": "报告 Transformers、PyTorch、CUDA 和缓存状态，仅释放本节点包加载的 MOSS 模型。",
+    "inputs": { "action": { "name": "动作" }, "model": { "name": "指定 MOSS 模型" } },
+    "outputs": { "0": { "name": "环境报告 JSON" } }
+  }
+}

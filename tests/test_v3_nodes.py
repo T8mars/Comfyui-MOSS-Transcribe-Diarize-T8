@@ -25,7 +25,7 @@ def _load_plugin():
     return module
 
 
-def test_registers_six_pure_v3_nodes():
+def test_registers_nine_pure_v3_nodes():
     plugin = _load_plugin()
     extension = asyncio.run(plugin.comfy_entrypoint())
     nodes = asyncio.run(extension.get_node_list())
@@ -34,18 +34,21 @@ def test_registers_six_pure_v3_nodes():
         "T8_MOSS_ModelLoader",
         "T8_MOSS_PromptHotwords",
         "T8_MOSS_TranscribeDiarize",
+        "T8_MOSS_SmartLongAudio",
         "T8_MOSS_TranscriptValidate",
+        "T8_MOSS_QualityGate",
+        "T8_MOSS_SubtitleStyle",
         "T8_MOSS_SubtitleExport",
         "T8_MOSS_EnvironmentRelease",
     ]
     assert all(schema.category == "T8star-Aix/Audio/MOSS Transcribe Diarize" for schema in schemas)
     assert schemas[2].outputs[0].io_type == "AUDIO"
-    assert schemas[4].is_output_node is True
-    assert schemas[4].not_idempotent is True
-    assert schemas[5].is_output_node is True
-    assert schemas[5].not_idempotent is True
-    assert nodes[4].OUTPUT_NODE is True
-    assert nodes[5].OUTPUT_NODE is True
+    assert schemas[7].is_output_node is True
+    assert schemas[7].not_idempotent is True
+    assert schemas[8].is_output_node is True
+    assert schemas[8].not_idempotent is True
+    assert nodes[7].OUTPUT_NODE is True
+    assert nodes[8].OUTPUT_NODE is True
     assert not hasattr(plugin, "NODE_CLASS_MAPPINGS")
     # ComfyUI's current V3 API exposes the stable input identifier as ``id``;
     # the lightweight compatibility stub used by isolated tests calls it
@@ -57,7 +60,28 @@ def test_registers_six_pure_v3_nodes():
     assert {"memory_policy", "release_after_run", "attention_implementation"} <= input_names[0]
     assert "preset_id" in input_names[1]
     assert "silence_policy" in input_names[2]
-    assert {"chunk_id", "cross_chunk_speaker_map_json"} <= input_names[4]
+    assert {"preflight_backend", "vad_aggressiveness", "retry_policy"} <= input_names[2]
+    assert {"split_strategy", "checkpoint_mode", "checkpoint_id"} <= input_names[3]
+    assert {"min_end_coverage", "max_unknown_speaker_ratio"} <= input_names[5]
+    assert {"font_name", "video_width", "video_height"} <= input_names[6]
+    assert {"chunk_id", "cross_chunk_speaker_map_json", "style"} <= input_names[7]
+
+
+def test_locales_cover_every_v3_node_and_output():
+    plugin = _load_plugin()
+    extension = asyncio.run(plugin.comfy_entrypoint())
+    nodes = asyncio.run(extension.get_node_list())
+    root = Path(__file__).resolve().parents[1] / "locales"
+    for language in ("en", "zh"):
+        translations = json.loads((root / language / "nodeDefs.json").read_text(encoding="utf-8"))
+        assert set(translations) == {node.GET_SCHEMA().node_id for node in nodes}
+        for node in nodes:
+            schema = node.GET_SCHEMA()
+            translated = translations[schema.node_id]
+            assert set(translated.get("inputs", {})) == {
+                getattr(item, "id", getattr(item, "name", None)) for item in schema.inputs
+            }
+            assert set(translated.get("outputs", {})) == {str(index) for index in range(len(schema.outputs))}
 
 
 def test_api_examples_have_queue_eligible_output_nodes():

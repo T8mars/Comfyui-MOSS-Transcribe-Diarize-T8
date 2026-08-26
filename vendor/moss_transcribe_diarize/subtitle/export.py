@@ -49,10 +49,12 @@ def export_ass(
     segments: Iterable[SubtitleSegment],
     *,
     style: SubtitleStyle | None = None,
-    video_width: int = 1920,
-    video_height: int = 1080,
+    video_width: int | None = None,
+    video_height: int | None = None,
 ) -> str:
     style = style or SubtitleStyle()
+    video_width = int(video_width or style.video_width)
+    video_height = int(video_height or style.video_height)
     font_size = style.font_size or max(24, round(video_height * 0.045))
     segments = list(segments)
     speakers = sorted({segment.speaker for segment in segments})

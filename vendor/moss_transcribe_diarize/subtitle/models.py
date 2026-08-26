@@ -39,6 +39,8 @@ class SubtitleStyle:
     back_color: str = "&H64000000"
     outline: int = 3
     shadow: int = 1
+    video_width: int = 1920
+    video_height: int = 1080
     speaker_names: dict[str, str] | None = None
 
     @classmethod
@@ -56,7 +58,7 @@ class SubtitleStyle:
                 if isinstance(value, dict):
                     names = {str(key): str(name).strip() for key, name in value.items() if str(name).strip()}
                     setattr(style, field, names or None)
-            elif field in {"alignment", "margin_v", "outline", "shadow"}:
+            elif field in {"alignment", "margin_v", "outline", "shadow", "video_width", "video_height"}:
                 setattr(style, field, int(value))
             elif field in {"show_speaker", "speaker_colors"}:
                 setattr(style, field, bool(value))

@@ -1,0 +1,201 @@
+{
+  "T8_MOSS_ModelLoader": {
+    "display_name": "MOSS Transcribe Diarize Model Loader · T8star-Aix",
+    "description": "Discovers and validates a pinned MOSS model, then loads it lazily for transcription.",
+    "inputs": {
+      "model_name": { "name": "Model" },
+      "device": { "name": "Inference device" },
+      "precision": { "name": "Precision" },
+      "release_after_run": { "name": "Legacy: release after run" },
+      "verify_hashes": { "name": "Full SHA-256 verification" },
+      "memory_policy": {
+        "name": "VRAM residency policy",
+        "options": {
+          "keep": "Keep resident",
+          "release_under_pressure": "Release under pressure",
+          "release_after_run": "Release after each run"
+        }
+      },
+      "attention_implementation": {
+        "name": "Attention backend",
+        "tooltip": "Auto follows the upstream/Transformers default and records the resolved backend. Explicit backends fail clearly instead of silently falling back."
+      },
+      "custom_model_path": { "name": "Custom absolute model path" }
+    },
+    "outputs": {
+      "0": { "name": "MOSS model" },
+      "1": { "name": "Model information" }
+    }
+  },
+  "T8_MOSS_PromptHotwords": {
+    "display_name": "MOSS Prompt & Hotwords · T8star-Aix",
+    "description": "Builds a reusable prompt with reviewed presets, language hints, hotwords, and strict output formatting.",
+    "inputs": {
+      "base_prompt": { "name": "Base prompt" },
+      "preset_id": { "name": "Scenario preset" },
+      "hotwords": { "name": "Hotwords" },
+      "language_hint": { "name": "Language hint" },
+      "strict_format": { "name": "Enforce strict format" }
+    },
+    "outputs": {
+      "0": { "name": "MOSS prompt" },
+      "1": { "name": "Final prompt text" }
+    }
+  },
+  "T8_MOSS_TranscribeDiarize": {
+    "display_name": "MOSS Transcribe & Diarize · T8star-Aix",
+    "description": "Transcribes one audio input with speaker diarization, real VAD preflight, native progress, cancellation, and one optional strict retry.",
+    "inputs": {
+      "model": { "name": "MOSS model" },
+      "audio": { "name": "Audio" },
+      "max_new_tokens": { "name": "Maximum new tokens" },
+      "prompt": { "name": "Prompt (optional)" },
+      "silence_policy": {
+        "name": "Silence policy",
+        "options": { "warn": "Warn", "reject": "Reject", "ignore": "Ignore" }
+      },
+      "preflight_backend": {
+        "name": "Preflight backend",
+        "options": { "webrtc": "WebRTC VAD", "energy": "Energy fallback" }
+      },
+      "vad_aggressiveness": { "name": "VAD aggressiveness" },
+      "retry_policy": {
+        "name": "Strict retry policy",
+        "options": { "invalid_format": "Retry invalid format", "quality_failure": "Retry quality risk", "never": "Never retry" }
+      }
+    },
+    "outputs": {
+      "0": { "name": "Audio" },
+      "1": { "name": "Raw text" },
+      "2": { "name": "Transcript JSON" },
+      "3": { "name": "SRT" },
+      "4": { "name": "ASS" },
+      "5": { "name": "MOSS transcript" }
+    }
+  },
+  "T8_MOSS_SmartLongAudio": {
+    "display_name": "MOSS Smart Long Audio · T8star-Aix",
+    "description": "Splits long audio near VAD silence, transcribes chunks with overlap, removes boundary duplicates, and supports resumable checkpoints.",
+    "inputs": {
+      "model": { "name": "MOSS model" },
+      "audio": { "name": "Long audio" },
+      "max_new_tokens_per_chunk": { "name": "Tokens per chunk" },
+      "prompt": { "name": "Prompt (optional)" },
+      "target_chunk_minutes": { "name": "Target chunk length (min)" },
+      "max_chunk_minutes": { "name": "Hard maximum (min)" },
+      "overlap_seconds": { "name": "Chunk overlap (sec)" },
+      "split_strategy": {
+        "name": "Split strategy",
+        "options": { "vad": "VAD silence aware", "fixed": "Fixed length" }
+      },
+      "silence_policy": { "name": "Silence policy" },
+      "vad_aggressiveness": { "name": "VAD aggressiveness" },
+      "retry_policy": { "name": "Strict retry policy" },
+      "checkpoint_mode": {
+        "name": "Checkpoint mode",
+        "options": { "off": "Off", "read_write": "Resume and save", "restart": "Start over" }
+      },
+      "checkpoint_id": { "name": "Checkpoint ID" }
+    },
+    "outputs": {
+      "0": { "name": "Audio" },
+      "1": { "name": "Raw text" },
+      "2": { "name": "Transcript JSON" },
+      "3": { "name": "SRT" },
+      "4": { "name": "ASS" },
+      "5": { "name": "MOSS transcript" },
+      "6": { "name": "Chunk report" }
+    }
+  },
+  "T8_MOSS_TranscriptValidate": {
+    "display_name": "MOSS Transcript Validator · T8star-Aix",
+    "description": "Parses the canonical timestamp/speaker format and reports malformed lines, truncation risk, and speaker coverage.",
+    "inputs": {
+      "raw_text": { "name": "Raw model text" },
+      "media_duration_seconds": { "name": "Media duration (sec)" },
+      "generated_tokens": { "name": "Generated tokens" },
+      "max_new_tokens": { "name": "Maximum new tokens" },
+      "transcript": { "name": "Transcript (optional)" }
+    },
+    "outputs": {
+      "0": { "name": "Validated MOSS transcript" },
+      "1": { "name": "Validation report JSON" },
+      "2": { "name": "Segments JSON" }
+    }
+  },
+  "T8_MOSS_QualityGate": {
+    "display_name": "MOSS Transcript Quality Gate · T8star-Aix",
+    "description": "Returns a usability decision using format errors, end coverage, unknown speakers, repetition, and truncation risk.",
+    "inputs": {
+      "transcript": { "name": "MOSS transcript" },
+      "min_end_coverage": { "name": "Minimum end coverage" },
+      "max_unknown_speaker_ratio": { "name": "Maximum unknown-speaker ratio" },
+      "reject_repetition": { "name": "Reject repetition loops" },
+      "reject_truncation": { "name": "Reject truncation risk" }
+    },
+    "outputs": {
+      "0": { "name": "Evaluated MOSS transcript" },
+      "1": { "name": "Is usable" },
+      "2": { "name": "Quality report JSON" }
+    }
+  },
+  "T8_MOSS_SubtitleStyle": {
+    "display_name": "MOSS Subtitle Style · T8star-Aix",
+    "description": "Creates a reusable ASS subtitle style with resolution-aware sizing, layout, outline, and per-speaker colors.",
+    "inputs": {
+      "font_name": { "name": "Font name" },
+      "font_size": { "name": "Font size (0 = automatic)" },
+      "alignment": { "name": "ASS alignment (1-9)" },
+      "margin_v": { "name": "Vertical margin" },
+      "speaker_colors": { "name": "Color by speaker" },
+      "primary_color": { "name": "Primary color (ASS BGR)" },
+      "outline_color": { "name": "Outline color (ASS BGR)" },
+      "back_color": { "name": "Background color (ASS BGR)" },
+      "outline": { "name": "Outline width" },
+      "shadow": { "name": "Shadow width" },
+      "video_width": { "name": "Video width" },
+      "video_height": { "name": "Video height" }
+    },
+    "outputs": {
+      "0": { "name": "MOSS subtitle style" },
+      "1": { "name": "Style JSON" }
+    }
+  },
+  "T8_MOSS_SubtitleExport": {
+    "display_name": "MOSS Subtitle Export · T8star-Aix",
+    "description": "Exports JSON, TXT, SRT, and styled ASS content, with optional safe writes under ComfyUI/output.",
+    "inputs": {
+      "transcript": { "name": "MOSS transcript" },
+      "speaker_names_json": { "name": "Speaker rename JSON" },
+      "show_speaker": { "name": "Show speakers in subtitles" },
+      "filename_prefix": { "name": "Filename prefix" },
+      "write_files": { "name": "Write to output directory" },
+      "chunk_id": { "name": "Chunk ID (optional)" },
+      "cross_chunk_speaker_map_json": { "name": "Cross-chunk speaker map JSON" },
+      "style": { "name": "Subtitle style (optional)" }
+    },
+    "outputs": {
+      "0": { "name": "JSON content" },
+      "1": { "name": "TXT content" },
+      "2": { "name": "SRT content" },
+      "3": { "name": "ASS content" },
+      "4": { "name": "Exported file paths JSON" }
+    }
+  },
+  "T8_MOSS_EnvironmentRelease": {
+    "display_name": "MOSS Environment Diagnostics & Release · T8star-Aix",
+    "description": "Reports Transformers, PyTorch, CUDA, and cache state, and releases only MOSS models loaded by this node pack.",
+    "inputs": {
+      "action": {
+        "name": "Action",
+        "options": {
+          "report_only": "Report only",
+          "release_selected": "Release selected model",
+          "release_all_moss": "Release all MOSS models"
+        }
+      },
+      "model": { "name": "Selected MOSS model" }
+    },
+    "outputs": { "0": { "name": "Environment report JSON" } }
+  }
+}

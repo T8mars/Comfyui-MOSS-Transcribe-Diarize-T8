@@ -38,5 +38,5 @@ except ModuleNotFoundError as exc:
         ) from _COMFY_IMPORT_ERROR
 
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = ["comfy_entrypoint", "__version__"]

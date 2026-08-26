@@ -111,18 +111,19 @@ def load_local_model_processor_with_attention(
 
     model_path = str(Path(model_path).expanduser().resolve())
 
-    def local_model_loader(path: str, *, attn_implementation: str):
+    def local_model_loader(path: str, *, attn_implementation: str | None = None):
         # Load a fresh config for each fallback attempt because Transformers may
         # mutate its private attention fields during from_pretrained().
         config = MossTranscribeDiarizeConfig.from_pretrained(
             path,
             local_files_only=local_files_only,
         )
+        attention_kwargs = {} if attn_implementation is None else {"attn_implementation": attn_implementation}
         return MossTranscribeDiarizeForConditionalGeneration.from_pretrained(
             path,
             config=config,
             local_files_only=local_files_only,
-            attn_implementation=attn_implementation,
+            **attention_kwargs,
             **pretrained_dtype_kwargs(load_dtype),
         )
 

@@ -1,10 +1,9 @@
-"""Explicit attention backend selection for long-form local inference.
+"""Observable attention selection for long-form local inference.
 
-Transformers can silently resolve an unavailable attention implementation to
-``eager``.  Eager attention materializes quadratic attention tensors, which is
-especially risky for the long audio prompts handled by this project.  This
-module preflights candidates, records every fallback, and exposes the selected
-backend to diagnostics.
+``auto`` deliberately follows the upstream/Transformers default and records
+what the model resolved. Explicit selections remain available for diagnostics
+and controlled deployments, but are never silently rewritten or cascaded to a
+different implementation.
 """
 
 from __future__ import annotations
@@ -111,28 +110,26 @@ def _candidate_list(
     *,
     device: torch.device,
     dtype: torch.dtype,
-) -> tuple[list[str], list[dict[str, str]]]:
-    if requested != AUTO_ATTENTION_IMPLEMENTATION:
-        return [requested], []
+) -> tuple[list[str | None], list[dict[str, str]]]:
+    if requested == AUTO_ATTENTION_IMPLEMENTATION:
+        # Upstream reverted its explicit fallback policy on 2026-08-26. Keep
+        # the default path aligned with upstream while still reporting the
+        # resolved config. ``None`` means do not pass attn_implementation.
+        return [None], []
 
-    candidates: list[str] = []
-    attempts: list[dict[str, str]] = []
-    for implementation in _FLASH_IMPLEMENTATIONS:
-        reason = _flash_preflight(implementation, device, dtype)
-        if reason is None:
-            candidates.append(implementation)
-        else:
-            attempts.append({"backend": implementation, "status": "skipped", "reason": reason})
-            LOGGER.info("[MOSS attention] skip %s: %s", implementation, reason)
-
-    if _sdpa_available():
-        candidates.append("sdpa")
-    else:
-        reason = "torch.nn.functional.scaled_dot_product_attention is unavailable"
-        attempts.append({"backend": "sdpa", "status": "skipped", "reason": reason})
-        LOGGER.warning("[MOSS attention] skip sdpa: %s", reason)
-    candidates.append("eager")
-    return candidates, attempts
+    if requested in _FLASH_IMPLEMENTATIONS:
+        reason = _flash_preflight(requested, device, dtype)
+        if reason is not None:
+            return [], [{"backend": requested, "status": "failed", "reason": reason}]
+    elif requested == "sdpa" and not _sdpa_available():
+        return [], [
+            {
+                "backend": "sdpa",
+                "status": "failed",
+                "reason": "torch.nn.functional.scaled_dot_product_attention is unavailable",
+            }
+        ]
+    return [requested], []
 
 
 def _config_attention_values(model: Any) -> dict[str, str | None]:
@@ -168,6 +165,16 @@ def _attention_family(value: str | None) -> str | None:
 
 def _contains_eager(values: dict[str, str | None]) -> bool:
     return any(_attention_family(value) == "eager" for value in values.values())
+
+
+def _resolved_attention(values: dict[str, str | None]) -> str:
+    families = [_attention_family(value) for value in values.values()]
+    concrete = [value for value in families if value]
+    if not concrete:
+        return "upstream_default"
+    if len(set(concrete)) == 1:
+        return concrete[0]
+    return "+".join(dict.fromkeys(concrete))
 
 
 def _resolution_mismatch(requested: str, values: dict[str, str | None]) -> str | None:
@@ -306,7 +313,7 @@ def load_model_with_attention_fallback(
     requested: str = AUTO_ATTENTION_IMPLEMENTATION,
     model_loader: Callable[..., Any] | None = None,
 ) -> tuple[Any, dict[str, Any]]:
-    """Load a model through an explicit, logged attention fallback policy.
+    """Load a model through an explicit and observable attention policy.
 
     ``model_loader`` is used by the distribution to load the audited local
     implementation.  The optional default preserves standalone upstream-style
@@ -319,6 +326,7 @@ def load_model_with_attention_fallback(
         from transformers import AutoModelForCausalLM
 
         def model_loader(path: str, **kwargs: Any):
+            kwargs = {key: value for key, value in kwargs.items() if value is not None}
             return AutoModelForCausalLM.from_pretrained(
                 path,
                 trust_remote_code=True,
@@ -327,24 +335,30 @@ def load_model_with_attention_fallback(
             )
 
     for implementation in candidates:
+        backend = implementation or "upstream_default"
         model = None
         try:
-            model = model_loader(str(model_path), attn_implementation=implementation)
+            load_kwargs = {} if implementation is None else {"attn_implementation": implementation}
+            model = model_loader(str(model_path), **load_kwargs)
             config_values = _config_attention_values(model)
-            if implementation != "eager" and _contains_eager(config_values):
+            if implementation is not None and implementation != "eager" and _contains_eager(config_values):
                 raise RuntimeError(f"Transformers resolved {implementation} to eager: {config_values}")
-            mismatch = _resolution_mismatch(implementation, config_values)
-            if mismatch is not None:
-                raise RuntimeError(f"Transformers rewrote the requested attention implementation: {mismatch}")
+            if implementation is not None:
+                mismatch = _resolution_mismatch(implementation, config_values)
+                if mismatch is not None:
+                    raise RuntimeError(f"Transformers rewrote the requested attention implementation: {mismatch}")
+
+            selected = _resolved_attention(config_values) if implementation is None else implementation
 
             report: dict[str, Any] = {
                 "requested": requested,
-                "selected": implementation,
+                "policy": "upstream_default" if implementation is None else "explicit",
+                "selected": selected,
                 "config": config_values,
-                "attempts": [*attempts, {"backend": implementation, "status": "selected"}],
+                "attempts": [*attempts, {"backend": backend, "status": "selected"}],
                 "device_type": device.type,
             }
-            if implementation == "sdpa":
+            if selected == "sdpa":
                 try:
                     kernels = probe_sdpa_kernels(device, dtype)
                 except Exception as exc:  # noqa: BLE001
@@ -358,17 +372,17 @@ def load_model_with_attention_fallback(
                     )
                 else:
                     LOGGER.info("[MOSS attention] SDPA kernel preference: %s", kernels)
-            if implementation == "eager":
+            if selected == "eager":
                 LOGGER.warning(
                     "[MOSS attention] selected eager attention; long audio can require quadratic attention memory"
                 )
             else:
-                LOGGER.info("[MOSS attention] selected %s (requested=%s)", implementation, requested)
+                LOGGER.info("[MOSS attention] selected %s (requested=%s)", selected, requested)
             return model, report
         except Exception as exc:  # noqa: BLE001 - each candidate is isolated
             reason = f"{type(exc).__name__}: {str(exc).splitlines()[0]}"
-            attempts.append({"backend": implementation, "status": "failed", "reason": reason})
-            LOGGER.warning("[MOSS attention] %s unavailable; falling back: %s", implementation, reason)
+            attempts.append({"backend": backend, "status": "failed", "reason": reason})
+            LOGGER.warning("[MOSS attention] %s unavailable: %s", backend, reason)
             _release_failed_model(model, device)
 
     details = "; ".join(f"{item['backend']}: {item.get('reason', item['status'])}" for item in attempts)

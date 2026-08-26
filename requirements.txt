@@ -9,6 +9,7 @@ packaging>=24
 safetensors>=0.6.2
 soundfile>=0.12
 soxr>=0.5
+webrtcvad-wheels>=2.0.14,<3
 # Transformers is intentionally not changed by this file. The node supports
 # 4.52.1 <= version < 6; use scripts/check_transformers.py before choosing the
 # optional pinned v4 requirements file.
