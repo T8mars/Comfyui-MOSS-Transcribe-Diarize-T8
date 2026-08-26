@@ -7,10 +7,14 @@ import json
 import re
 import stat
 import subprocess
-import tomllib
 import zipfile
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]

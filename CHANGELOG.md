@@ -5,6 +5,7 @@
 - 修正 v0.3.0 中无法解析的 OpenMOSS 审计基线 SHA，固定到真实上游提交 `cde3c13af82c3001a21cf085d37ebc7d81e8981d`。
 - 增加 GitHub 与 Hugging Face 固定 revision 的远程可解析性检查，避免仅靠硬编码测试放过无效溯源信息。
 - 增加确定性 Release 打包、重复构建一致性检查、SHA-256 清单、构建清单与 GitHub artifact attestation。
+- 发布工具兼容项目声明支持的 Python 3.10，并纳入兼容矩阵验证。
 - 增加 Dependabot 与 CodeQL 安全自动化；运行时功能和模型权重保持不变。
 
 ## 0.3.0 - 2026-08-26
