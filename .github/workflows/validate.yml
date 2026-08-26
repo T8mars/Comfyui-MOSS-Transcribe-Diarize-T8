@@ -89,3 +89,12 @@ jobs:
           python -m json.tool locales/en/nodeDefs.json >/dev/null
           python -m json.tool locales/zh/nodeDefs.json >/dev/null
           for file in example_workflows/api/*.json example_workflows/ui/*.json manifests/*.json; do python -m json.tool "$file" >/dev/null; done
+      - name: Verify pinned upstream revisions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/verify_pinned_revisions.py
+      - name: Verify deterministic release build
+        run: |
+          python scripts/build_release.py --output "${RUNNER_TEMP}/release-a"
+          python scripts/build_release.py --output "${RUNNER_TEMP}/release-b"
+          diff -rq "${RUNNER_TEMP}/release-a" "${RUNNER_TEMP}/release-b"

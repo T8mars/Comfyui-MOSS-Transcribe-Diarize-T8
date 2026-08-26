@@ -20,7 +20,7 @@
 4. 在节点目录执行 `python scripts/download_models.py --comfyui-root ..\..`；Windows Portable 对应 `..\..\python_embeded\python.exe scripts\download_models.py --comfyui-root ..\..`。也可以用 `--target` 指定绝对目录，或手动把固定版本模型放到 `ComfyUI/models/moss_transcribe_diarize/MOSS-Transcribe-Diarize`。脚本启动下载前会打印最终目标目录，无法确认 ComfyUI 根目录时会直接报错，不会把权重静默放进 `custom_nodes`。
 5. 重启 ComfyUI，加载 `example_workflows/ui` 中的可视化工作流；API 调用示例位于 `example_workflows/api`。基础示例覆盖热词、严格重试和字幕样式，长音频示例覆盖 VAD 切分、断点续跑、质量门与环境诊断。
 
-模型固定到 Hugging Face revision `e8681d68e7042738ffca8ac8212bc8fcb1131ab8`，代码审计基线固定到 OpenMOSS revision `cde3c13af82c539f751b3e8063fd72aa52d5e970`。该上游提交撤销了显式 Attention 选择，因此本包的 `auto` 不传覆盖参数、跟随上游/Transformers 默认并记录实际结果；用户显式指定的后端失败时会直接报错，不会静默换成另一实现。加载器默认校验文件大小，可选全量 SHA-256；下载脚本会在模型目录写入仅供本机诊断的 `.t8-download-report.json`，不发送远程统计。
+模型固定到 Hugging Face revision `e8681d68e7042738ffca8ac8212bc8fcb1131ab8`，代码审计基线固定到 OpenMOSS revision `cde3c13af82c3001a21cf085d37ebc7d81e8981d`。该上游提交撤销了显式 Attention 选择，因此本包的 `auto` 不传覆盖参数、跟随上游/Transformers 默认并记录实际结果；用户显式指定的后端失败时会直接报错，不会静默换成另一实现。加载器默认校验文件大小，可选全量 SHA-256；下载脚本会在模型目录写入仅供本机诊断的 `.t8-download-report.json`，不发送远程统计。
 
 ## 九个 V3 节点
 

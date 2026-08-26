@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Validate, build, attest, and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install release validation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt transformers==5.15.1 Pillow pytest comfy-cli==1.16.0 ruff==0.12.12
+      - name: Test against pinned ComfyUI V3 API
+        run: |
+          git clone --filter=blob:none https://github.com/Comfy-Org/ComfyUI.git .compat/ComfyUI
+          git -C .compat/ComfyUI checkout 5ab2f7a2d676c1fb7b410c22e82e2ed8f217b56c
+          PYTHONPATH="$PWD/.compat/ComfyUI" python -m pytest -q tests
+      - name: Validate source and Registry metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/verify_pinned_revisions.py
+          comfy node validate
+          ruff check .
+      - name: Build twice and compare
+        run: |
+          python scripts/build_release.py --output "${RUNNER_TEMP}/release-a" --expected-tag "${GITHUB_REF_NAME}"
+          python scripts/build_release.py --output "${RUNNER_TEMP}/release-b" --expected-tag "${GITHUB_REF_NAME}"
+          diff -rq "${RUNNER_TEMP}/release-a" "${RUNNER_TEMP}/release-b"
+          mkdir dist
+          cp "${RUNNER_TEMP}/release-a/"* dist/
+          sha256sum dist/*
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: dist/*
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [[ -f "$notes" ]]; then
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest --title "comfyui-MOSS-Transcribe-Diarize-T8 ${GITHUB_REF_NAME}" --notes-file "$notes"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest --title "comfyui-MOSS-Transcribe-Diarize-T8 ${GITHUB_REF_NAME}" --generate-notes
+          fi

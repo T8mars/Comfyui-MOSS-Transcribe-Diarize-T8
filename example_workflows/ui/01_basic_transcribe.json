@@ -24,7 +24,7 @@
         {"name": "model", "type": "T8_MOSS_TRANSCRIBE_MODEL", "links": [1]},
         {"name": "model_info", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_ModelLoader", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
+      "properties": {"Node name for S&R": "T8_MOSS_ModelLoader", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.1"},
       "widgets_values": ["MOSS-Transcribe-Diarize", "auto", "auto", false, false, "keep", "auto", ""]
     },
     {
@@ -59,7 +59,7 @@
         {"name": "prompt", "type": "T8_MOSS_PROMPT", "links": [3]},
         {"name": "prompt_text", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_PromptHotwords", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
+      "properties": {"Node name for S&R": "T8_MOSS_PromptHotwords", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.1"},
       "widgets_values": ["请将音频转写为文本，每段包含起止时间戳与说话人编号。", "zh_meeting", "OpenMOSS, ComfyUI, T8star-Aix", "中文", true]
     },
     {
@@ -88,7 +88,7 @@
         {"name": "ass", "type": "STRING", "links": []},
         {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "links": [4]}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_TranscribeDiarize", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
+      "properties": {"Node name for S&R": "T8_MOSS_TranscribeDiarize", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.1"},
       "widgets_values": [0, "warn", "webrtc", 2, "invalid_format"]
     },
     {
@@ -116,7 +116,7 @@
         {"name": "ass", "type": "STRING", "links": []},
         {"name": "files", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_SubtitleExport", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
+      "properties": {"Node name for S&R": "T8_MOSS_SubtitleExport", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.1"},
       "widgets_values": ["{\"S01\": \"主持人\", \"S02\": \"嘉宾\"}", true, "moss_meeting", true, "meeting-part1", "{}"]
     },
     {
@@ -145,7 +145,7 @@
         {"name": "style", "type": "T8_MOSS_SUBTITLE_STYLE", "links": [5]},
         {"name": "style_json", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_SubtitleStyle", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.0"},
+      "properties": {"Node name for S&R": "T8_MOSS_SubtitleStyle", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.1"},
       "widgets_values": ["Noto Sans CJK SC", 0, 2, 56, true, "&H00FFFFFF", "&H00000000", "&H64000000", 3, 1, 1920, 1080]
     }
   ],
