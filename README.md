@@ -16,7 +16,7 @@
    也可以下载 GitHub Release ZIP，并解压为同名目录。
 
 2. 在 ComfyUI Python 环境执行 `pip install -r requirements.txt`。依赖清单不会安装或替换 `torch`、`torchaudio`、`torchvision` 或 `transformers`。Windows Portable 应使用 `..\..\python_embeded\python.exe -m pip install -r requirements.txt`，不要误装到系统 Python。
-3. 执行 `python scripts/check_transformers.py`；Windows Portable 对应 `..\..\python_embeded\python.exe scripts\check_transformers.py`。已有 Transformers 4.52.1–5.x 会原样保留；仅当版本过旧时，才按提示选择 `requirements-transformers-v4.txt` 修复到 4.57.6。
+3. 执行 `python scripts/check_transformers.py`；Windows Portable 对应 `..\..\python_embeded\python.exe scripts\check_transformers.py`。Transformers 5.5.0–5.x 会原样保留；4.52.1–5.4 仍兼容本节点，但存在已公开安全公告，脚本会提示在确认其他节点兼容后用 `requirements-transformers-v5.txt` 升级到 5.15.1。
 4. 在节点目录执行 `python scripts/download_models.py --comfyui-root ..\..`；Windows Portable 对应 `..\..\python_embeded\python.exe scripts\download_models.py --comfyui-root ..\..`。也可以用 `--target` 指定绝对目录，或手动把固定版本模型放到 `ComfyUI/models/moss_transcribe_diarize/MOSS-Transcribe-Diarize`。脚本启动下载前会打印最终目标目录，无法确认 ComfyUI 根目录时会直接报错，不会把权重静默放进 `custom_nodes`。
 5. 重启 ComfyUI，加载 `example_workflows/ui` 中的可视化工作流；API 调用示例位于 `example_workflows/api`。基础示例覆盖热词、严格重试和字幕样式，长音频示例覆盖 VAD 切分、断点续跑、质量门与环境诊断。
 
@@ -36,7 +36,7 @@
 
 ## 兼容与限制
 
-- 支持 Transformers `>=4.52.1,<6`，共享兼容层避免强制把现有 ComfyUI 升级到 5.x；已通过 4.52.1、4.57.6、5.6.0、5.15.1 兼容测试。
+- 运行时支持 Transformers `>=4.52.1,<6`，并已通过 4.52.1、4.57.6、5.6.0、5.15.1 兼容测试；出于已公开安全公告，推荐使用 `>=5.5.0,<6`，安全修复文件固定到 5.15.1。
 - Windows 10/11 x64 + NVIDIA 12GB 以上为正式目标。8-10GB 仅作为短音频兼容档；CPU FP32 仅作功能兜底，不承诺速度。
 - 输出是句/段级时间戳，不是逐词时间戳。智能长音频节点会把说话人编号按分片隔离；跨分片同一人仍需通过导出节点显式人工映射。
 - 静音、音乐、噪声和复杂长音频仍可能出现幻觉、提前结束或重复。VAD、严格重试和质量门用于暴露并拦截风险，不等同于人工审核或绝对准确性保证。
@@ -47,7 +47,7 @@
 ## 已验证环境与正常测试
 
 - Windows 11 x64、Python 3.12.13、PyTorch 2.8.0+cu128、Transformers 5.15.1。
-- ComfyUI revision `5ab2f7a2d676c1fb7b410c22e82e2ed8f217b56c`，九个 V3 节点独立注册成功；31 项自动化测试覆盖新功能与兼容路径。
+- ComfyUI revision `5ab2f7a2d676c1fb7b410c22e82e2ed8f217b56c`，九个 V3 节点独立注册成功；33 项自动化测试覆盖新功能与兼容路径。
 - RTX 5090 Laptop 24GB，BF16，本地固定模型 revision。
 
 | 输入时长 | 耗时 | 峰值显存 | 生成 token | 结果 |

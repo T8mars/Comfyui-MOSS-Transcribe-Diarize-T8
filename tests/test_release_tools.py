@@ -29,8 +29,8 @@ def test_revision_targets_use_full_resolvable_urls():
 
 
 def test_release_build_is_reproducible_and_excludes_tests(tmp_path: Path):
-    first = build_release.build_release(tmp_path / "first", expected_tag="v0.3.1")
-    second = build_release.build_release(tmp_path / "second", expected_tag="v0.3.1")
+    first = build_release.build_release(tmp_path / "first", expected_tag="v0.3.2")
+    second = build_release.build_release(tmp_path / "second", expected_tag="v0.3.2")
     assert [path.name for path in first] == [path.name for path in second]
     assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
 
@@ -39,13 +39,15 @@ def test_release_build_is_reproducible_and_excludes_tests(tmp_path: Path):
         names = package.namelist()
     assert "README.md" in names
     assert "README_EN.md" in names
+    assert "requirements-transformers-v5.txt" in names
+    assert "requirements-transformers-v4.txt" not in names
     assert "scripts/build_release.py" in names
     assert not any(name.startswith("tests/") for name in names)
     assert not any("__pycache__" in name for name in names)
     assert not any(name.startswith(".compat/") for name in names)
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["node_version"] == "0.3.1"
+    assert manifest["node_version"] == "0.3.2"
     assert manifest["upstream_code_revision"] == EXPECTED_CODE_REVISION
     assert manifest["archive"]["name"] == archive.name
     assert manifest["archive"]["sha256"] == build_release.sha256(archive)

@@ -16,7 +16,7 @@ A MOSS Transcribe Diarize ComfyUI V3 custom node pack maintained by T8star-Aix. 
    Alternatively, download the GitHub Release ZIP and extract it to a directory with the same name.
 
 2. Run `pip install -r requirements.txt` in the ComfyUI Python environment. The dependency list will not install or replace `torch`, `torchaudio`, `torchvision`, or `transformers`. For Windows Portable, use `..\..\python_embeded\python.exe -m pip install -r requirements.txt` to avoid installing packages into the system Python environment by mistake.
-3. Run `python scripts/check_transformers.py`; for Windows Portable, use `..\..\python_embeded\python.exe scripts/check_transformers.py`. Existing Transformers versions from 4.52.1 through 5.x are kept unchanged. Only when the installed version is too old should you follow the prompt and use `requirements-transformers-v4.txt` to repair it to 4.57.6.
+3. Run `python scripts/check_transformers.py`; for Windows Portable, use `..\..\python_embeded\python.exe scripts/check_transformers.py`. Transformers 5.5.0 through 5.x are kept unchanged. Versions 4.52.1 through 5.4 remain runtime-compatible with this node but are affected by published security advisories; after checking compatibility with other nodes, follow the prompt to upgrade to 5.15.1 with `requirements-transformers-v5.txt`.
 4. From the node directory, run `python scripts/download_models.py --comfyui-root ..\..`; for Windows Portable, use `..\..\python_embeded\python.exe scripts/download_models.py --comfyui-root ..\..`. You can also specify an absolute path with `--target`, or manually place the pinned model in `ComfyUI/models/moss_transcribe_diarize/MOSS-Transcribe-Diarize`. The script prints the final destination before starting the download. If it cannot identify the ComfyUI root, it exits with an error instead of silently placing model weights under `custom_nodes`.
 5. Restart ComfyUI and load a visual workflow from `example_workflows/ui`. API examples are available in `example_workflows/api`. The basic example covers hotwords, strict retry, and subtitle styling; the long-audio example covers VAD splitting, resumable checkpoints, quality gating, and environment diagnostics.
 
@@ -36,7 +36,7 @@ The model is pinned to Hugging Face revision `e8681d68e7042738ffca8ac8212bc8fcb1
 
 ## Compatibility and Limitations
 
-- Supports Transformers `>=4.52.1,<6`. A shared compatibility layer avoids forcing an existing ComfyUI installation to upgrade to Transformers 5.x. Compatibility has been tested with 4.52.1, 4.57.6, 5.6.0, and 5.15.1.
+- Runtime compatibility covers Transformers `>=4.52.1,<6` and has been tested with 4.52.1, 4.57.6, 5.6.0, and 5.15.1. Because of published security advisories, `>=5.5.0,<6` is recommended and the security-repair file pins 5.15.1.
 - The supported production target is Windows 10/11 x64 with an NVIDIA GPU and at least 12 GB of VRAM. GPUs with 8–10 GB are supported only as a short-audio compatibility tier. CPU FP32 is a functional fallback with no performance guarantee.
 - Timestamps are generated at the sentence/segment level, not per word. Smart Long Audio namespaces speaker IDs by chunk; matching the same person across chunks still requires explicit manual mapping in the export node.
 - Silence, music, noise, and complex long-form audio may still cause hallucinations, early termination, or repetition. VAD, strict retry, and the quality gate expose and block risk; they are not a substitute for human review or a guarantee of accuracy.
@@ -47,7 +47,7 @@ This project is not an official OpenMOSS/MOSI distribution. See `LICENSE`, `DISC
 ## Verified Environment and Normal-Path Tests
 
 - Windows 11 x64, Python 3.12.13, PyTorch 2.8.0+cu128, and Transformers 5.15.1.
-- ComfyUI revision `5ab2f7a2d676c1fb7b410c22e82e2ed8f217b56c`; all nine V3 nodes registered independently, with 31 automated tests covering the new features and compatibility paths.
+- ComfyUI revision `5ab2f7a2d676c1fb7b410c22e82e2ed8f217b56c`; all nine V3 nodes registered independently, with 33 automated tests covering the new features and compatibility paths.
 - RTX 5090 Laptop 24 GB, BF16, with the locally pinned model revision.
 
 | Input length | Runtime | Peak VRAM | Generated tokens | Result |

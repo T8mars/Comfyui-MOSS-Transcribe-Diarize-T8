@@ -1,0 +1,3 @@
+# Optional security repair for environments using an older Transformers release.
+# Check other custom nodes before changing a shared ComfyUI environment.
+transformers==5.15.1

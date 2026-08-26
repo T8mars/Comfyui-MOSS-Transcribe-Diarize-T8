@@ -13,4 +13,4 @@ tomli>=2.0.1; python_version < "3.11"
 webrtcvad-wheels>=2.0.14,<3
 # Transformers is intentionally not changed by this file. The node supports
 # 4.52.1 <= version < 6; use scripts/check_transformers.py before choosing the
-# optional pinned v4 requirements file.
+# optional security-patched Transformers requirements file.
