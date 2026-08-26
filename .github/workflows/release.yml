@@ -62,7 +62,8 @@ jobs:
         run: |
           notes=".github/release-notes/${GITHUB_REF_NAME}.md"
           if [[ -f "$notes" ]]; then
-            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest --title "comfyui-MOSS-Transcribe-Diarize-T8 ${GITHUB_REF_NAME}" --notes-file "$notes"
+            gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --title "comfyui-MOSS-Transcribe-Diarize-T8 ${GITHUB_REF_NAME}" --notes-file "$notes"
           else
-            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest --title "comfyui-MOSS-Transcribe-Diarize-T8 ${GITHUB_REF_NAME}" --generate-notes
+            gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --title "comfyui-MOSS-Transcribe-Diarize-T8 ${GITHUB_REF_NAME}" --generate-notes
           fi
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
