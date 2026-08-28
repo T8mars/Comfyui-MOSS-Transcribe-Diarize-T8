@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Monday 04:15 Asia/Shanghai (GitHub cron uses UTC).
+    - cron: "15 20 * * 0"
 
 permissions:
   contents: read
@@ -11,6 +14,7 @@ permissions:
 jobs:
   compatibility:
     name: Windows / Python ${{ matrix.python }} / Transformers ${{ matrix.transformers }}
+    if: ${{ github.event_name != 'schedule' }}
     runs-on: windows-latest
     timeout-minutes: 35
     strategy:
@@ -66,10 +70,15 @@ jobs:
       - name: Test against latest ComfyUI V3 API
         run: |
           git clone --depth=1 https://github.com/Comfy-Org/ComfyUI.git .compat/ComfyUI
+          comfyui_sha="$(git -C .compat/ComfyUI rev-parse HEAD)"
+          echo "Testing ComfyUI commit ${comfyui_sha}"
+          echo "### Latest ComfyUI compatibility" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tested commit: \`${comfyui_sha}\`" >> "$GITHUB_STEP_SUMMARY"
           PYTHONPATH="$PWD/.compat/ComfyUI" python -m pytest -q tests
 
   package-metadata:
     name: Registry metadata, security, and source quality
+    if: ${{ github.event_name != 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

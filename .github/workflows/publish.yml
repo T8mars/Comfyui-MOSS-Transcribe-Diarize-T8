@@ -2,8 +2,11 @@ name: Publish to Comfy Registry
 
 on:
   workflow_dispatch:
-  release:
-    types: [published]
+    inputs:
+      release_ref:
+        description: Tag or branch to publish (for retries)
+        required: true
+        default: main
 
 permissions:
   contents: read
@@ -17,6 +20,8 @@ jobs:
     steps:
       - name: Check out release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_ref }}
       - name: Validate Registry token configuration
         if: ${{ env.REGISTRY_ACCESS_TOKEN == '' }}
         run: echo "::warning::REGISTRY_ACCESS_TOKEN is not configured; Registry publication was skipped."

@@ -113,13 +113,13 @@ def test_ui_workflows_reference_current_node_package_version():
             for node in payload.get("nodes", [])
             if node.get("properties", {}).get("cnr_id") == "comfyui-moss-transcribe-diarize-t8"
         }
-        assert versions == {"0.3.2"}, f"{path.name} has stale node versions: {versions}"
+        assert versions == {"0.3.3"}, f"{path.name} has stale node versions: {versions}"
 
 
 def test_manifest_is_pinned_to_reviewed_revisions():
     manifest = model_store.load_manifest()
     assert manifest["revision"] == "e8681d68e7042738ffca8ac8212bc8fcb1131ab8"
-    assert manifest["code_revision"] == "cde3c13af82c3001a21cf085d37ebc7d81e8981d"
+    assert manifest["code_revision"] == "cb765f2b0fe6f7a298aa2002e2281ae693d1f3c3"
     assert "never silently fall back" in manifest["integration_attention_policy"]
     assert manifest["files"]["model-00000-of-00001.safetensors"]["size"] == 1817113576
 

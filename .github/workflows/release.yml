@@ -67,3 +67,24 @@ jobs:
             gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --title "comfyui-MOSS-Transcribe-Diarize-T8 ${GITHUB_REF_NAME}" --generate-notes
           fi
           gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+
+  publish-registry:
+    name: Publish tagged version to Comfy Registry
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      REGISTRY_ACCESS_TOKEN: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate Registry token configuration
+        if: ${{ env.REGISTRY_ACCESS_TOKEN == '' }}
+        run: echo "::warning::REGISTRY_ACCESS_TOKEN is not configured; Registry publication was skipped."
+      - name: Publish custom node
+        if: ${{ env.REGISTRY_ACCESS_TOKEN != '' }}
+        uses: Comfy-Org/publish-node-action@d2366e7abb6ab16f3bb03e3520ae25c8cf749bc9
+        with:
+          personal_access_token: ${{ secrets.REGISTRY_ACCESS_TOKEN }}

@@ -7,7 +7,7 @@ from pathlib import Path
 from scripts import build_release, verify_pinned_revisions
 
 
-EXPECTED_CODE_REVISION = "cde3c13af82c3001a21cf085d37ebc7d81e8981d"
+EXPECTED_CODE_REVISION = "cb765f2b0fe6f7a298aa2002e2281ae693d1f3c3"
 EXPECTED_MODEL_REVISION = "e8681d68e7042738ffca8ac8212bc8fcb1131ab8"
 
 
@@ -29,8 +29,8 @@ def test_revision_targets_use_full_resolvable_urls():
 
 
 def test_release_build_is_reproducible_and_excludes_tests(tmp_path: Path):
-    first = build_release.build_release(tmp_path / "first", expected_tag="v0.3.2")
-    second = build_release.build_release(tmp_path / "second", expected_tag="v0.3.2")
+    first = build_release.build_release(tmp_path / "first", expected_tag="v0.3.3")
+    second = build_release.build_release(tmp_path / "second", expected_tag="v0.3.3")
     assert [path.name for path in first] == [path.name for path in second]
     assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
 
@@ -47,8 +47,23 @@ def test_release_build_is_reproducible_and_excludes_tests(tmp_path: Path):
     assert not any(name.startswith(".compat/") for name in names)
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["node_version"] == "0.3.2"
+    assert manifest["node_version"] == "0.3.3"
     assert manifest["upstream_code_revision"] == EXPECTED_CODE_REVISION
     assert manifest["archive"]["name"] == archive.name
     assert manifest["archive"]["sha256"] == build_release.sha256(archive)
     assert archive.name in sums.read_text(encoding="utf-8")
+
+
+def test_release_and_compatibility_workflows_keep_automatic_delivery_observable():
+    root = Path(__file__).resolve().parents[1]
+    release = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    retry = (root / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+    validate = (root / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
+
+    assert "publish-registry:" in release
+    assert "needs: release" in release
+    assert "Comfy-Org/publish-node-action@" in release
+    assert "release_ref:" in retry
+    assert "types: [published]" not in retry
+    assert 'cron: "15 20 * * 0"' in validate
+    assert "GITHUB_STEP_SUMMARY" in validate

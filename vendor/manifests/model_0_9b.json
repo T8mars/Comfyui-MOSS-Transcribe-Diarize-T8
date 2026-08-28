@@ -3,8 +3,8 @@
   "model_id": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
   "revision": "e8681d68e7042738ffca8ac8212bc8fcb1131ab8",
   "code_repository": "OpenMOSS/MOSS-Transcribe-Diarize",
-  "code_revision": "cde3c13af82c3001a21cf085d37ebc7d81e8981d",
-  "integration_attention_policy": "auto follows upstream default; explicit backends never silently fall back",
+  "code_revision": "cb765f2b0fe6f7a298aa2002e2281ae693d1f3c3",
+  "integration_attention_policy": "auto prefers FlashAttention-2 then SDPA with eager as a reported last resort; explicit backends never silently fall back",
   "license": "Apache-2.0",
   "files": {
     "added_tokens.json": {"size": 707, "sha256": "c0284b582e14987fbd3d5a2cb2bd139084371ed9acbae488829a1c900833c680"},

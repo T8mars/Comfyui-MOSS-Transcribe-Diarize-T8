@@ -1,9 +1,10 @@
 """Observable attention selection for long-form local inference.
 
-``auto`` deliberately follows the upstream/Transformers default and records
-what the model resolved. Explicit selections remain available for diagnostics
-and controlled deployments, but are never silently rewritten or cascaded to a
-different implementation.
+``auto`` deliberately prefers efficient, bounded-memory implementations in the
+same order as the audited upstream loader: FlashAttention-2, SDPA, then eager
+as a clearly reported last resort. Explicit selections remain available for
+diagnostics and controlled deployments, but are never silently rewritten or
+cascaded to a different implementation.
 """
 
 from __future__ import annotations
@@ -112,10 +113,32 @@ def _candidate_list(
     dtype: torch.dtype,
 ) -> tuple[list[str | None], list[dict[str, str]]]:
     if requested == AUTO_ATTENTION_IMPLEMENTATION:
-        # Upstream reverted its explicit fallback policy on 2026-08-26. Keep
-        # the default path aligned with upstream while still reporting the
-        # resolved config. ``None`` means do not pass attn_implementation.
-        return [None], []
+        # Do not delegate ``auto`` to Transformers: some supported versions can
+        # silently resolve the model to eager attention, whose memory use grows
+        # quadratically with long audio. Keep the audited upstream order while
+        # recording why optional candidates were skipped.
+        candidates: list[str | None] = []
+        attempts: list[dict[str, str]] = []
+
+        flash_reason = _flash_preflight("flash_attention_2", device, dtype)
+        if flash_reason is None:
+            candidates.append("flash_attention_2")
+        else:
+            attempts.append({"backend": "flash_attention_2", "status": "skipped", "reason": flash_reason})
+
+        if _sdpa_available():
+            candidates.append("sdpa")
+        else:
+            attempts.append(
+                {
+                    "backend": "sdpa",
+                    "status": "skipped",
+                    "reason": "torch.nn.functional.scaled_dot_product_attention is unavailable",
+                }
+            )
+
+        candidates.append("eager")
+        return candidates, attempts
 
     if requested in _FLASH_IMPLEMENTATIONS:
         reason = _flash_preflight(requested, device, dtype)
@@ -352,7 +375,7 @@ def load_model_with_attention_fallback(
 
             report: dict[str, Any] = {
                 "requested": requested,
-                "policy": "upstream_default" if implementation is None else "explicit",
+                "policy": "automatic_fallback" if requested == AUTO_ATTENTION_IMPLEMENTATION else "explicit",
                 "selected": selected,
                 "config": config_values,
                 "attempts": [*attempts, {"backend": backend, "status": "selected"}],

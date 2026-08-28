@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 - 2026-08-28
+
+- 跟进 OpenMOSS `cb765f2b0fe6f7a298aa2002e2281ae693d1f3c3`：默认 `auto` 不再把 Attention 选择留给 Transformers，而是按 FlashAttention-2、SDPA、eager 顺序显式尝试，避免长音频静默落到平方显存增长的 eager。
+- 自动回退会记录跳过、失败和最终选择；用户显式指定的后端仍保持严格语义，失败时不会静默换成其他实现。
+- Registry 发布改为在标签 Release 流水线内直接执行，消除由 `GITHUB_TOKEN` 创建 Release 后无法级联触发第二个工作流的问题；独立工作流保留为指定 tag/branch 的手动重试入口。
+- 增加每周最新版 ComfyUI 兼容检查，并在 Actions 摘要中记录实际测试的 ComfyUI commit SHA。
+- Registry 元数据补充 Windows、Linux 和 NVIDIA CUDA 分类；Python 3.10 的 Tomli 最低版本统一提升到 2.4.1。
+
 ## 0.3.2 - 2026-08-26
 
 - 移除会触发 2 个高危、1 个中危公告的 Transformers 4.57.6 可选修复固定，改为安全修复版 Transformers 5.15.1。

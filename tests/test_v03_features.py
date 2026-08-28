@@ -33,20 +33,22 @@ def _payload(text: str, segments: tuple[dict, ...], *, duration: float = 10.0):
     )
 
 
-def test_attention_auto_omits_override_and_explicit_failure_never_falls_back():
+def test_attention_auto_prefers_sdpa_and_explicit_failure_never_falls_back():
     seen = []
 
     def loader(_path, **kwargs):
-        seen.append(kwargs.get("attn_implementation", "omitted"))
+        seen.append(kwargs["attn_implementation"])
         config = SimpleNamespace(_attn_implementation="sdpa", text_config=None, audio_config=None)
         return SimpleNamespace(config=config)
 
     _model, report = attention.load_model_with_attention_fallback(
         ".", device=torch.device("cpu"), dtype=torch.float32, requested="auto", model_loader=loader
     )
-    assert seen == ["omitted"]
-    assert report["policy"] == "upstream_default"
+    assert seen == ["sdpa"]
+    assert report["policy"] == "automatic_fallback"
     assert report["selected"] == "sdpa"
+    assert report["attempts"][0]["backend"] == "flash_attention_2"
+    assert report["attempts"][0]["status"] == "skipped"
 
     calls = []
 
@@ -59,6 +61,48 @@ def test_attention_auto_omits_override_and_explicit_failure_never_falls_back():
             ".", device=torch.device("cpu"), dtype=torch.float32, requested="eager", model_loader=failing_loader
         )
     assert calls == ["eager"]
+
+
+def test_attention_auto_falls_back_to_eager_without_accepting_silent_rewrite():
+    calls = []
+
+    def loader(_path, **kwargs):
+        requested = kwargs["attn_implementation"]
+        calls.append(requested)
+        if requested == "sdpa":
+            config = SimpleNamespace(_attn_implementation="eager", text_config=None, audio_config=None)
+            return SimpleNamespace(config=config)
+        config = SimpleNamespace(_attn_implementation="eager", text_config=None, audio_config=None)
+        return SimpleNamespace(config=config)
+
+    _model, report = attention.load_model_with_attention_fallback(
+        ".", device=torch.device("cpu"), dtype=torch.float32, requested="auto", model_loader=loader
+    )
+
+    assert calls == ["sdpa", "eager"]
+    assert report["selected"] == "eager"
+    assert report["attempts"][-2]["backend"] == "sdpa"
+    assert report["attempts"][-2]["status"] == "failed"
+    assert report["attempts"][-1] == {"backend": "eager", "status": "selected"}
+
+
+def test_attention_auto_prefers_flash_attention_2_when_preflight_passes(monkeypatch):
+    calls = []
+    monkeypatch.setattr(attention, "_flash_preflight", lambda *_args, **_kwargs: None)
+
+    def loader(_path, **kwargs):
+        requested = kwargs["attn_implementation"]
+        calls.append(requested)
+        config = SimpleNamespace(_attn_implementation=requested, text_config=None, audio_config=None)
+        return SimpleNamespace(config=config)
+
+    _model, report = attention.load_model_with_attention_fallback(
+        ".", device=torch.device("cuda"), dtype=torch.float16, requested="auto", model_loader=loader
+    )
+
+    assert calls == ["flash_attention_2"]
+    assert report["selected"] == "flash_attention_2"
+    assert report["policy"] == "automatic_fallback"
 
 
 def test_webrtc_vad_and_energy_fallback_are_observable():
