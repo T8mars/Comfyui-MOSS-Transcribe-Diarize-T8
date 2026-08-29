@@ -1,4 +1,4 @@
-from .export import export_ass, export_json, export_srt, write_text
+from .export import export_ass, export_json, export_srt, validate_ass_style, write_text
 from .layout import assign_overlap_lanes
 from .models import SubtitleSegment, SubtitleStyle
 from .postprocess import (
@@ -19,5 +19,6 @@ __all__ = [
     "normalize_segments",
     "subtitle_segments_from_transcript",
     "subtitle_segments_from_transcript_segments",
+    "validate_ass_style",
     "write_text",
 ]

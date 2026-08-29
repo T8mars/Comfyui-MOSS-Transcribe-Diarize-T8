@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import platform
@@ -14,7 +15,7 @@ from comfy_api.latest import ComfyExtension, io
 
 from .runtime.inference import build_prompt, run_transcription
 from .runtime.long_audio import transcribe_long_audio
-from .runtime.model_cache import MODEL_CACHE
+from .runtime.model_cache import MODEL_CACHE, _cuda_bf16_supported
 from .runtime.quality import evaluate_quality
 from .runtime.types import ModelHandle, PromptConfig, TranscriptPayload
 from .services.model_store import (
@@ -31,13 +32,21 @@ from .vendor.moss_transcribe_diarize.audio_adapter import TARGET_SAMPLE_RATE, co
 from .vendor.moss_transcribe_diarize.attention import ATTENTION_IMPLEMENTATIONS, AUTO_ATTENTION_IMPLEMENTATION
 from .vendor.moss_transcribe_diarize.prompt_presets import PROMPT_PRESETS
 from .vendor.moss_transcribe_diarize.speaker_mapping import resolve_speaker_names
-from .vendor.moss_transcribe_diarize.subtitle import SubtitleSegment, SubtitleStyle, export_ass, export_json, export_srt
+from .vendor.moss_transcribe_diarize.subtitle import (
+    SubtitleSegment,
+    SubtitleStyle,
+    export_ass,
+    export_json,
+    export_srt,
+    validate_ass_style,
+)
 from .vendor.moss_transcribe_diarize.transcript_validation import validate_transcript
 from .vendor.moss_transcribe_diarize.transformers_compat import compatibility_report
 
 
 LOGGER = logging.getLogger("comfyui-MOSS-Transcribe-Diarize-T8")
 CATEGORY = "T8star-Aix/Audio/MOSS Transcribe Diarize"
+MAX_OUTPUT_PREFIX_LENGTH = 120
 ModelType = io.Custom("T8_MOSS_TRANSCRIBE_MODEL")
 PromptType = io.Custom("T8_MOSS_PROMPT")
 TranscriptType = io.Custom("T8_MOSS_TRANSCRIPT")
@@ -78,6 +87,49 @@ def _transcript_json(payload: TranscriptPayload) -> str:
     return json.dumps(payload.to_dict(), ensure_ascii=False, indent=2)
 
 
+def _merge_validation_diagnostics(
+    original: tuple[dict, ...],
+    generated: tuple[dict, ...],
+) -> tuple[dict, ...]:
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for item in (*original, *generated):
+        diagnostic = dict(item)
+        signature = json.dumps(diagnostic, ensure_ascii=False, sort_keys=True, default=str)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        merged.append(diagnostic)
+    return tuple(merged)
+
+
+def _merge_validated_segments(
+    validated_segments,
+    original_segments: tuple[dict, ...],
+) -> tuple[dict, ...]:
+    validated_segments = tuple(validated_segments)
+    merged: list[dict] = []
+    for index, segment in enumerate(validated_segments, 1):
+        candidate = original_segments[index - 1] if index <= len(original_segments) else None
+        preserves_original = bool(
+            candidate
+            and str(candidate.get("speaker") or "S00") == segment.speaker
+            and str(candidate.get("text") or "").strip() == segment.text
+        )
+        original = dict(candidate) if preserves_original else {}
+        merged.append(
+            {
+                **original,
+                "id": str(original.get("id") or f"seg-{index:05d}"),
+                "start": segment.start,
+                "end": segment.end,
+                "speaker": segment.speaker,
+                "text": segment.text,
+            }
+        )
+    return tuple(merged)
+
+
 def _subtitle_outputs(payload: TranscriptPayload) -> tuple[str, str]:
     segments = _subtitle_segments(payload)
     return export_srt(segments), export_ass(segments)
@@ -85,6 +137,32 @@ def _subtitle_outputs(payload: TranscriptPayload) -> tuple[str, str]:
 
 def _unique_output_stem(safe_prefix: str) -> str:
     return f"{safe_prefix}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
+
+
+def _safe_output_prefix(filename_prefix: str) -> str:
+    safe = re.sub(r"[^0-9A-Za-z._\u4e00-\u9fff-]+", "_", filename_prefix).strip("._") or "moss_transcript"
+    if len(safe) > MAX_OUTPUT_PREFIX_LENGTH:
+        suffix = hashlib.sha256(safe.encode("utf-8")).hexdigest()[:12]
+        safe = f"{safe[: MAX_OUTPUT_PREFIX_LENGTH - len(suffix) - 1]}-{suffix}"
+    return safe
+
+
+def _optional_float(value) -> float:
+    if value in (None, ""):
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _optional_int(value) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 class T8MossModelLoader(io.ComfyNode):
@@ -576,43 +654,63 @@ class T8MossTranscriptValidate(io.ComfyNode):
         transcript: TranscriptPayload | None = None,
     ) -> io.NodeOutput:
         source = transcript.raw_text if transcript is not None else raw_text
-        duration = float(media_duration_seconds) or (
-            float(transcript.metadata.get("audio_duration_seconds", 0)) if transcript else 0.0
+        duration = _optional_float(media_duration_seconds) or (
+            _optional_float(transcript.metadata.get("audio_duration_seconds")) if transcript else 0.0
         )
-        used_tokens = int(generated_tokens) or (int(transcript.metadata.get("generated_tokens", 0)) if transcript else 0)
-        limit = int(max_new_tokens) or (int(transcript.metadata.get("max_new_tokens", 0)) if transcript else 0)
+        used_tokens = _optional_int(generated_tokens) or (
+            _optional_int(transcript.metadata.get("generated_tokens")) if transcript else 0
+        )
+        limit = _optional_int(max_new_tokens) or (
+            _optional_int(transcript.metadata.get("max_new_tokens")) if transcript else 0
+        )
         result = validate_transcript(
             source,
             media_duration=duration or None,
             generated_tokens=used_tokens or None,
             max_new_tokens=limit or None,
         )
+        original_segments = transcript.segments if transcript is not None else ()
+        original_diagnostics = transcript.diagnostics if transcript is not None else ()
+        segments = _merge_validated_segments(result.segments, original_segments)
+        diagnostics = _merge_validation_diagnostics(
+            original_diagnostics,
+            tuple(asdict(item) for item in result.diagnostics),
+        )
+        possibly_truncated = bool(
+            result.possibly_truncated
+            or (transcript and transcript.metadata.get("possibly_truncated"))
+            or any(item.get("code") == "token_limit_reached" for item in diagnostics)
+        )
+        validation_passed = bool(
+            result.valid and not any(str(item.get("level") or "") == "error" for item in diagnostics)
+        )
+        metadata = dict(transcript.metadata) if transcript else {}
+        for key, value in (
+            ("audio_duration_seconds", duration),
+            ("generated_tokens", used_tokens),
+            ("max_new_tokens", limit),
+        ):
+            if value:
+                metadata[key] = value
+            else:
+                metadata.pop(key, None)
+        metadata.update(
+            {
+                "possibly_truncated": possibly_truncated,
+                "validation_passed": validation_passed,
+            }
+        )
         payload = TranscriptPayload(
             raw_text=source,
-            segments=tuple(
-                {
-                    "id": f"seg-{index:05d}",
-                    "start": segment.start,
-                    "end": segment.end,
-                    "speaker": segment.speaker,
-                    "text": segment.text,
-                }
-                for index, segment in enumerate(result.segments, 1)
-            ),
-            diagnostics=tuple(asdict(item) for item in result.diagnostics),
-            metadata={
-                **(transcript.metadata if transcript else {}),
-                "audio_duration_seconds": duration or None,
-                "generated_tokens": used_tokens or None,
-                "max_new_tokens": limit or None,
-                "possibly_truncated": result.possibly_truncated,
-                "validation_passed": result.valid,
-            },
+            segments=segments,
+            diagnostics=diagnostics,
+            metadata=metadata,
         )
+        payload.metadata["quality"] = evaluate_quality(payload)
         report = {
-            "valid": result.valid,
-            "possibly_truncated": result.possibly_truncated,
-            "segment_count": len(result.segments),
+            "valid": validation_passed,
+            "possibly_truncated": possibly_truncated,
+            "segment_count": len(payload.segments),
             "diagnostics": list(payload.diagnostics),
         }
         return io.NodeOutput(
@@ -750,6 +848,7 @@ class T8MossSubtitleStyle(io.ComfyNode):
             video_width=int(video_width),
             video_height=int(video_height),
         )
+        validate_ass_style(style)
         return io.NodeOutput(style, json.dumps(style.to_dict(), ensure_ascii=False, indent=2))
 
 
@@ -832,9 +931,12 @@ class T8MossSubtitleExport(io.ComfyNode):
             show_speaker=bool(show_speaker),
             speaker_names=names or None,
         )
-        json_text = export_json(segments)
+        json_text = export_json(segments, speaker_names=names or None)
         txt_text = "\n".join(
-            f"[{item.start:.2f}][{names.get(item.speaker, item.speaker)}]{item.text}[{item.end:.2f}]" for item in segments
+            f"[{item.start:.2f}]"
+            f"{'[' + str(names.get(item.speaker, item.speaker)) + ']' if style.show_speaker else ''}"
+            f"{item.text}[{item.end:.2f}]"
+            for item in segments
         ) + ("\n" if segments else "")
         srt_text = export_srt(segments, show_speaker=style.show_speaker, speaker_names=style.speaker_names)
         ass_text = export_ass(segments, style=style)
@@ -842,7 +944,7 @@ class T8MossSubtitleExport(io.ComfyNode):
         if write_files:
             import folder_paths
 
-            safe_prefix = re.sub(r"[^0-9A-Za-z._\u4e00-\u9fff-]+", "_", filename_prefix).strip("._") or "moss_transcript"
+            safe_prefix = _safe_output_prefix(filename_prefix)
             output_dir = Path(folder_paths.get_output_directory()).resolve() / "moss_transcribe_diarize"
             output_dir.mkdir(parents=True, exist_ok=True)
             stem = _unique_output_stem(safe_prefix)
@@ -897,7 +999,7 @@ class T8MossEnvironmentRelease(io.ComfyNode):
                     "index": index,
                     "name": props.name,
                     "total_vram_gb": round(props.total_memory / 1024**3, 2),
-                    "bf16_supported": bool(torch.cuda.is_bf16_supported(index)),
+                    "bf16_supported": _cuda_bf16_supported(torch.device(f"cuda:{index}")),
                     "meets_12gb_baseline": props.total_memory >= 12 * 1024**3,
                     "meets_10gb_baseline": props.total_memory >= 10 * 1024**3,
                 })

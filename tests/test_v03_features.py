@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import concurrent.futures
 import importlib
+import json
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -108,6 +110,16 @@ def test_attention_auto_prefers_flash_attention_2_when_preflight_passes(monkeypa
     assert report["policy"] == "automatic_fallback"
 
 
+def test_flash_attention_2_rejects_pre_ampere_devices(monkeypatch):
+    monkeypatch.setattr(attention, "_device_capability", lambda _device: (7, 5))
+    monkeypatch.setattr(attention, "_module_available", lambda _name: True)
+    monkeypatch.setattr(attention, "_transformers_flash_available", lambda _implementation: True)
+
+    reason = attention._flash_preflight("flash_attention_2", torch.device("cuda:0"), torch.float16)
+
+    assert reason == "requires compute capability >= 8.x, got (7, 5)"
+
+
 def test_webrtc_vad_and_energy_fallback_are_observable():
     empty, frame_size, backend = audio_preflight.detect_speech_frames(
         np.zeros(0, dtype=np.float32), 16000, backend="webrtc"
@@ -136,6 +148,57 @@ def test_quality_gate_detects_coverage_unknown_speakers_and_repetition():
         "too_many_unknown_speakers",
         "repeated_text",
     } <= set(report["reasons"])
+
+
+def test_out_of_range_timestamps_are_rejected_and_never_outrank_a_safer_result():
+    first = validation_module.validate_transcript(
+        "[0.00]accurate words[8.00]",
+        media_duration=10.0,
+    )
+    retry = validation_module.validate_transcript(
+        "[0.00][S01]invented words[999.00]",
+        media_duration=10.0,
+    )
+    payload = types_module.TranscriptPayload(
+        raw_text="[0.00][S01]invented words[999.00]",
+        segments=tuple(
+            {"start": item.start, "end": item.end, "speaker": item.speaker, "text": item.text}
+            for item in retry.segments
+        ),
+        diagnostics=tuple(
+            {"level": item.level, "code": item.code, "message": item.message}
+            for item in retry.diagnostics
+        ),
+        metadata={"audio_duration_seconds": 10.0},
+    )
+
+    assert inference._validation_rank(first) > inference._validation_rank(retry)
+    assert inference._retry_reason(retry, "quality_failure") == "quality_failure"
+    assert quality.evaluate_quality(payload)["reasons"] == ["timestamp_out_of_range"]
+
+
+def test_partial_transcript_with_incomplete_tail_is_invalid_and_retried():
+    result = validation_module.validate_transcript(
+        "[0.00][S01]complete[1.00][1.00][S02]unfinished tail",
+        media_duration=2.0,
+        generated_tokens=20,
+        max_new_tokens=100,
+    )
+
+    assert [item.text for item in result.segments] == ["complete"]
+    assert result.valid is False
+    assert {item.code for item in result.diagnostics} == {"incomplete_segment"}
+    assert inference._retry_reason(result, "invalid_format") == "invalid_format"
+
+
+def test_malformed_content_between_valid_segments_is_not_silently_ignored():
+    result = validation_module.validate_transcript(
+        "[0.00][S01]first[1.00][broken][1.00][S02]second[2.00]"
+    )
+
+    assert [item.text for item in result.segments] == ["first", "second"]
+    assert result.valid is False
+    assert "invalid_format" in {item.code for item in result.diagnostics}
 
 
 def test_smart_chunk_planning_merge_and_overlap_deduplication():
@@ -223,11 +286,79 @@ def test_cross_chunk_speaker_mapping_targets_namespaced_long_audio_speakers():
         False,
         cross_chunk_speaker_map_json='{"part001:S01":"Host"}',
     )
-    _json_text, txt_text, srt_text, ass_text, files_text = output.result
+    json_text, txt_text, srt_text, ass_text, files_text = output.result
+    json_payload = json.loads(json_text)
+    assert json_payload[0]["speaker"] == "S001001"
+    assert json_payload[0]["speaker_name"] == "Host"
     assert "[Host]hello" in txt_text
     assert "Host: hello" in srt_text
     assert "Host: hello" in ass_text
     assert files_text == "{}"
+
+
+def test_transcript_validate_preserves_long_audio_provenance_and_risk_diagnostics():
+    transcript = types_module.TranscriptPayload(
+        raw_text="[0.00][S001001]hello[10.00]",
+        segments=(
+            {
+                "id": "part001/seg-00001",
+                "start": 0.0,
+                "end": 10.0,
+                "speaker": "S001001",
+                "text": "hello",
+                "chunk_id": "part001",
+                "local_speaker": "S01",
+            },
+        ),
+        diagnostics=(
+            {"level": "info", "code": "smart_long_audio_chunking", "message": "chunked"},
+            {
+                "level": "warning",
+                "code": "token_limit_reached",
+                "message": "truncated",
+                "chunk_id": "part001",
+            },
+        ),
+        metadata={"audio_duration_seconds": 10.0, "speaker_scope": "chunk_namespaced"},
+    )
+
+    validated = nodes_module.T8MossTranscriptValidate.execute("", 0.0, 0, 0, transcript).result[0]
+    report = quality.evaluate_quality(validated)
+    exported = nodes_module.T8MossSubtitleExport.execute(
+        validated,
+        "{}",
+        True,
+        "moss_transcript",
+        False,
+        cross_chunk_speaker_map_json='{"part001:S01":"Host"}',
+    )
+
+    assert validated.segments == transcript.segments
+    assert {item["code"] for item in validated.diagnostics} >= {
+        "smart_long_audio_chunking",
+        "token_limit_reached",
+    }
+    assert validated.metadata["possibly_truncated"] is True
+    assert report["usable"] is False and "possibly_truncated" in report["reasons"]
+    assert json.loads(exported.result[0])[0]["speaker_name"] == "Host"
+    assert "Host: hello" in exported.result[2]
+
+
+def test_transcript_validate_can_be_chained_when_optional_metadata_is_unknown():
+    transcript = types_module.TranscriptPayload(
+        raw_text="[0.00][S01]hello[1.00]",
+        segments=(),
+        diagnostics=(),
+        metadata={},
+    )
+
+    first = nodes_module.T8MossTranscriptValidate.execute("", 0.0, 0, 0, transcript).result[0]
+    second = nodes_module.T8MossTranscriptValidate.execute("", 0.0, 0, 0, first).result[0]
+
+    assert second.segments == first.segments
+    assert "audio_duration_seconds" not in second.metadata
+    assert "generated_tokens" not in second.metadata
+    assert "max_new_tokens" not in second.metadata
 
 
 def test_long_audio_merge_preserves_repeated_phrases_without_chunk_overlap():
@@ -254,6 +385,34 @@ def test_long_audio_merge_preserves_distinct_repetitions_inside_overlap_window()
     merged = long_audio.merge_chunk_payloads(chunks, [first, second], total_duration=19.0)
 
     assert [item["text"] for item in merged.segments] == ["yes", "yes"]
+
+
+def test_overlap_deduplication_checks_every_segment_in_the_overlap_window():
+    chunks = [
+        long_audio.AudioChunk(1, "part001", 0, 320000, 0.0, 20.0),
+        long_audio.AudioChunk(2, "part002", 160000, 480000, 10.0, 30.0),
+    ]
+    first_segments = tuple(
+        {
+            "start": 10.0 + index * 0.4,
+            "end": 10.2 + index * 0.4,
+            "speaker": "S01",
+            "text": "boundary duplicate" if index == 0 else f"unique {index}",
+        }
+        for index in range(21)
+    )
+    payloads = [
+        _payload("", first_segments, duration=20.0),
+        _payload(
+            "",
+            ({"start": 0.0, "end": 0.2, "speaker": "S02", "text": "boundary duplicate"},),
+            duration=20.0,
+        ),
+    ]
+
+    merged = long_audio.merge_chunk_payloads(chunks, payloads, total_duration=30.0)
+
+    assert [item["text"] for item in merged.segments].count("boundary duplicate") == 1
 
 
 def test_long_audio_checkpoint_resumes_after_interruption(monkeypatch, tmp_path: Path):
@@ -400,7 +559,7 @@ def test_long_audio_checkpoint_configuration_change_reprocesses_every_chunk(monk
     assert {item["text"] for item in merged.segments} == {"new result"}
 
 
-def test_long_audio_checkpoint_fingerprint_covers_every_inference_setting(tmp_path: Path):
+def test_long_audio_checkpoint_fingerprint_covers_every_inference_setting(tmp_path: Path, monkeypatch):
     samples = np.ones(16000, dtype=np.float32) * 0.1
     chunks = [long_audio.AudioChunk(1, "part001", 0, 16000, 0.0, 1.0)]
     budgets = [256]
@@ -437,6 +596,76 @@ def test_long_audio_checkpoint_fingerprint_covers_every_inference_setting(tmp_pa
     assert fingerprint(silence_policy="reject") != baseline
     assert fingerprint(preflight_backend="energy") != baseline
     assert fingerprint(vad_aggressiveness=3) != baseline
+    monkeypatch.setattr(long_audio, "LONG_AUDIO_ALGORITHM_VERSION", "t8.moss-long-audio.test-change")
+    assert fingerprint() != baseline
+
+
+def test_checkpoint_names_are_bounded_and_atomic_concurrent_writes_do_not_collide(tmp_path: Path):
+    fingerprint = "f" * 64
+    path = long_audio._checkpoint_path(tmp_path, "x" * 300, fingerprint, "read_write")
+    chunk = long_audio.AudioChunk(1, "part001", 0, 16000, 0.0, 1.0)
+    barrier = threading.Barrier(8)
+
+    def save(index: int):
+        payload = _payload(
+            f"[0.00][S01]worker {index}[1.00]",
+            ({"start": 0.0, "end": 1.0, "speaker": "S01", "text": f"worker {index}"},),
+            duration=1.0,
+        )
+        barrier.wait()
+        long_audio._save_checkpoint(path, f"fingerprint-{index}", [chunk], {1: payload})
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(save, range(8)))
+
+    assert len(path.name) <= long_audio.MAX_CHECKPOINT_NAME_LENGTH + len(".json")
+    assert json.loads(path.read_text(encoding="utf-8"))["schema"] == long_audio.CHECKPOINT_SCHEMA
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_checkpoint_job_lock_serializes_same_checkpoint(tmp_path: Path):
+    path = tmp_path / "shared.json"
+    first = long_audio._acquire_checkpoint_lock(path, None)
+    attempted = threading.Event()
+    acquired = threading.Event()
+
+    def acquire_second():
+        attempted.set()
+        second = long_audio._acquire_checkpoint_lock(path, None)
+        acquired.set()
+        second.release()
+
+    thread = threading.Thread(target=acquire_second)
+    thread.start()
+    assert attempted.wait(1.0)
+    assert not acquired.wait(0.3)
+    first.release()
+    assert acquired.wait(2.0)
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+
+def test_long_subtitle_filename_prefix_is_safely_bounded(monkeypatch, tmp_path: Path):
+    folder_paths = importlib.import_module("folder_paths")
+    monkeypatch.setattr(folder_paths, "get_output_directory", lambda: str(tmp_path))
+    transcript = _payload(
+        "[0.00][S01]hello[1.00]",
+        ({"start": 0.0, "end": 1.0, "speaker": "S01", "text": "hello"},),
+        duration=1.0,
+    )
+
+    output = nodes_module.T8MossSubtitleExport.execute(
+        transcript,
+        '{"S01":"Host"}',
+        True,
+        "x" * 300,
+        True,
+    )
+    files = json.loads(output.result[4])
+
+    assert set(files) == {"json", "txt", "srt", "ass"}
+    assert all(Path(path).is_file() for path in files.values())
+    assert all(len(Path(path).name) < 255 for path in files.values())
 
 
 def test_invalid_format_is_retried_once_and_better_result_is_selected(monkeypatch, tmp_path: Path):
@@ -517,6 +746,45 @@ def test_success_without_retry_uses_a_single_pass_progress_total(monkeypatch, tm
     assert progress == [(4, 16), (16, 16)]
 
 
+def test_long_audio_retry_progress_does_not_finish_before_retry_work(monkeypatch, tmp_path: Path):
+    progress = []
+    monkeypatch.setattr(long_audio, "_comfy_runtime_callbacks", lambda _total: (progress.append, None))
+    monkeypatch.setattr(long_audio.MODEL_CACHE, "acquire", lambda _handle: SimpleNamespace())
+    monkeypatch.setattr(long_audio.MODEL_CACHE, "done", lambda *_args: None)
+
+    def retrying(_handle, samples, _prompt, **kwargs):
+        budget = kwargs["max_new_tokens"]
+        callback = kwargs["progress_callback"]
+        callback(budget, budget)
+        assert progress[-1] < budget
+        callback(budget + budget // 2, budget * 2)
+        assert progress[-1] < budget
+        callback(budget * 2, budget * 2)
+        return _payload(
+            "[0.00][S01]hello[1.00]",
+            ({"start": 0.0, "end": 1.0, "speaker": "S01", "text": "hello"},),
+            duration=len(samples) / 16000.0,
+        )
+
+    monkeypatch.setattr(long_audio, "run_transcription_samples", retrying)
+    handle = types_module.ModelHandle(tmp_path, "cpu", "float32", model_revision="fixed")
+
+    long_audio.transcribe_long_audio(
+        handle,
+        np.ones(16000, dtype=np.float32),
+        None,
+        max_new_tokens_per_chunk=16,
+        target_seconds=2.0,
+        max_seconds=2.0,
+        overlap_seconds=0.0,
+        split_strategy="fixed",
+        checkpoint_mode="off",
+    )
+
+    assert progress[-1] == 16
+    assert progress == sorted(progress)
+
+
 def test_retry_ranking_prefers_clean_speaker_labels_and_no_generation_loop():
     risky_segments = tuple(
         SimpleNamespace(start=float(index), end=float(index + 1), speaker="S00", text="repeat")
@@ -560,3 +828,38 @@ def test_subtitle_style_controls_resolution_and_auto_font_size():
     ass = subtitle.export_ass([segment], style=style)
     assert "PlayResX: 1280" in ass and "PlayResY: 720" in ass
     assert "Style: Default,Inter,32" in ass
+
+
+def test_subtitle_export_hides_speaker_in_txt_when_requested():
+    transcript = _payload(
+        "[0.00][S01]hello[1.00]",
+        ({"start": 0.0, "end": 1.0, "speaker": "S01", "text": "hello"},),
+        duration=1.0,
+    )
+
+    output = nodes_module.T8MossSubtitleExport.execute(
+        transcript,
+        '{"S01":"Host"}',
+        False,
+        "moss_transcript",
+        False,
+    )
+
+    assert output.result[1] == "[0.00]hello[1.00]\n"
+    assert "Host" not in output.result[2]
+    assert "Host" not in output.result[3]
+
+
+@pytest.mark.parametrize(
+    "style, message",
+    [
+        (subtitle.SubtitleStyle(font_name="Arial,Injected"), "font_name"),
+        (subtitle.SubtitleStyle(font_name="Arial\nStyle: Injected"), "font_name"),
+        (subtitle.SubtitleStyle(primary_color="#ffffff"), "primary_color"),
+    ],
+)
+def test_ass_style_rejects_fields_that_can_break_the_file(style, message):
+    segment = subtitle.SubtitleSegment("1", 0.0, 1.0, "S01", "Hello")
+
+    with pytest.raises(ValueError, match=message):
+        subtitle.export_ass([segment], style=style)

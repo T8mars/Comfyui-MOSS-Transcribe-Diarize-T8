@@ -13,7 +13,6 @@ MANIFEST_PATH = PLUGIN_ROOT / "manifests" / "model_0_9b.json"
 MODEL_FOLDER_NAME = "MOSS-Transcribe-Diarize"
 MODEL_PATH_KEY = "moss_transcribe_diarize"
 MISSING_MODEL_OPTION = "[未找到] 请将模型放入 models/moss_transcribe_diarize"
-_HASH_CACHE: dict[tuple[str, int, int], str] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,18 +115,27 @@ def resolve_model(model_name: str, custom_model_path: str = "") -> Path:
 
 
 def _sha256(path: Path) -> str:
-    stat = path.stat()
-    key = (str(path.resolve()), stat.st_size, stat.st_mtime_ns)
-    cached = _HASH_CACHE.get(key)
-    if cached is not None:
-        return cached
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
-    value = digest.hexdigest()
-    _HASH_CACHE[key] = value
-    return value
+    return digest.hexdigest()
+
+
+def _content_signature(path: Path, size: int, *, sample_size: int = 64 * 1024) -> str:
+    digest = hashlib.sha256()
+    offsets = {
+        0,
+        max(0, size // 2 - sample_size // 2),
+        max(0, size - sample_size),
+    }
+    with path.open("rb") as stream:
+        for offset in sorted(offsets):
+            stream.seek(offset)
+            chunk = stream.read(sample_size)
+            digest.update(offset.to_bytes(8, "little", signed=False))
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def validate_model_dir(model_dir: Path | str, *, verify_hashes: bool = False) -> ValidationReport:
@@ -153,7 +161,11 @@ def model_fingerprint(model_dir: Path | str) -> str:
         path = model_dir.joinpath(*relative.split("/"))
         try:
             stat = path.stat()
-            parts.append(f"{relative}:{stat.st_size}:{stat.st_mtime_ns}")
+            parts.append(
+                f"{relative}:{stat.st_size}:{stat.st_mtime_ns}:"
+                f"{getattr(stat, 'st_ctime_ns', 0)}:{getattr(stat, 'st_ino', 0)}:"
+                f"{_content_signature(path, stat.st_size)}"
+            )
         except FileNotFoundError:
             parts.append(f"{relative}:missing")
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()

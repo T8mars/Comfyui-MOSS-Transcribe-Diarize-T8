@@ -89,6 +89,8 @@ def _flash_preflight(implementation: str, device: torch.device, dtype: torch.dty
         return f"requires compute capability >= 9.x, got {capability}"
     if implementation == "flash_attention_3" and major < 8:
         return f"requires compute capability >= 8.x, got {capability}"
+    if implementation == "flash_attention_2" and major < 8:
+        return f"requires compute capability >= 8.x, got {capability}"
 
     module_name = {
         "flash_attention_4": "flash_attn",

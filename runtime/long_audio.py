@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+import uuid
 
+from filelock import FileLock, Timeout
 import numpy as np
 
 from .inference import _comfy_runtime_callbacks, run_transcription_samples
@@ -16,6 +18,11 @@ from .quality import evaluate_quality
 from .types import ModelHandle, PromptConfig, TranscriptPayload
 from ..vendor.moss_transcribe_diarize.audio_preflight import detect_speech_frames
 from ..vendor.moss_transcribe_diarize.generation_budget import estimate_max_new_tokens
+
+
+CHECKPOINT_SCHEMA = "t8.moss-long-audio-checkpoint.v1"
+LONG_AUDIO_ALGORITHM_VERSION = "t8.moss-long-audio.v2"
+MAX_CHECKPOINT_NAME_LENGTH = 96
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,22 +206,23 @@ def transcribe_long_audio(
         retry_policy=retry_policy,
     )
     checkpoint_path = _checkpoint_path(checkpoint_dir, checkpoint_id, fingerprint, checkpoint_mode)
-    if checkpoint_mode == "restart" and checkpoint_path is not None and checkpoint_path.exists():
-        checkpoint_path.unlink()
-    if checkpoint_mode == "read_write":
-        completed, checkpoint_status = _load_checkpoint(checkpoint_path, fingerprint)
-    elif checkpoint_mode == "restart":
-        completed, checkpoint_status = {}, "restarted"
-    else:
-        completed, checkpoint_status = {}, "off"
-
     total_budget = max(1, sum(budgets))
     progress, cancellation = _comfy_runtime_callbacks(total_budget)
-    payloads: dict[int, TranscriptPayload] = dict(completed)
-    if progress is not None and completed:
-        progress(sum(budgets[index - 1] for index in completed if 1 <= index <= len(budgets)))
+    checkpoint_lock = _acquire_checkpoint_lock(checkpoint_path, cancellation)
     entry = None
     try:
+        if checkpoint_mode == "restart" and checkpoint_path is not None and checkpoint_path.exists():
+            checkpoint_path.unlink()
+        if checkpoint_mode == "read_write":
+            completed, checkpoint_status = _load_checkpoint(checkpoint_path, fingerprint)
+        elif checkpoint_mode == "restart":
+            completed, checkpoint_status = {}, "restarted"
+        else:
+            completed, checkpoint_status = {}, "off"
+
+        payloads: dict[int, TranscriptPayload] = dict(completed)
+        if progress is not None and completed:
+            progress(sum(budgets[index - 1] for index in completed if 1 <= index <= len(budgets)))
         for chunk, budget in zip(chunks, budgets, strict=True):
             if cancellation is not None:
                 cancellation()
@@ -225,8 +233,21 @@ def transcribe_long_audio(
             base = sum(budgets[: chunk.index - 1])
             high_water = [base]
 
-            def report_chunk(value: int, _total: int, *, base_value: int = base, chunk_budget: int = budget) -> None:
-                absolute = base_value + min(max(int(value), 0), chunk_budget)
+            def report_chunk(
+                value: int,
+                current_total: int,
+                *,
+                base_value: int = base,
+                chunk_budget: int = budget,
+                retry_allowed: bool = retry_policy != "never",
+            ) -> None:
+                resolved_total = max(1, int(current_total))
+                clamped_value = min(max(int(value), 0), resolved_total)
+                fraction = clamped_value / resolved_total
+                if retry_allowed and resolved_total <= chunk_budget:
+                    fraction *= 0.5
+                completed_units = min(chunk_budget, max(0, round(fraction * chunk_budget)))
+                absolute = base_value + completed_units
                 high_water[0] = max(high_water[0], absolute)
                 if progress is not None:
                     progress(high_water[0])
@@ -244,11 +265,18 @@ def transcribe_long_audio(
                 cancellation_callback=cancellation,
                 cache_entry=entry,
             )
+            high_water[0] = base + budget
+            if progress is not None:
+                progress(high_water[0])
             payloads[chunk.index] = payload
             _save_checkpoint(checkpoint_path, fingerprint, chunks, payloads)
     finally:
-        if entry is not None:
-            MODEL_CACHE.done(handle, entry)
+        try:
+            if entry is not None:
+                MODEL_CACHE.done(handle, entry)
+        finally:
+            if checkpoint_lock is not None:
+                checkpoint_lock.release()
 
     ordered_payloads = [payloads[chunk.index] for chunk in chunks]
     merged = merge_chunk_payloads(chunks, ordered_payloads, total_duration=array.size / float(sample_rate))
@@ -405,12 +433,14 @@ def _is_overlap_duplicate(
     candidate_chunk = chunks_by_id.get(str(candidate.get("chunk_id") or ""))
     if candidate_chunk is None:
         return False
-    for item in reversed(previous[-20:]):
+    for item in reversed(previous):
         if item.get("chunk_id") == candidate.get("chunk_id"):
             continue
         previous_chunk = chunks_by_id.get(str(item.get("chunk_id") or ""))
         if previous_chunk is None:
             continue
+        if previous_chunk.end_seconds <= candidate_chunk.start_seconds:
+            break
         overlap_start = max(previous_chunk.start_seconds, candidate_chunk.start_seconds)
         overlap_end = min(previous_chunk.end_seconds, candidate_chunk.end_seconds)
         if overlap_end <= overlap_start:
@@ -472,6 +502,7 @@ def _job_fingerprint(
             {
                 "model_revision": handle.model_revision,
                 "model_fingerprint": handle.model_fingerprint,
+                "long_audio_algorithm_version": LONG_AUDIO_ALGORITHM_VERSION,
                 "model_dir": str(handle.model_dir.resolve()),
                 "device": handle.device,
                 "precision": handle.precision,
@@ -499,14 +530,31 @@ def _checkpoint_path(
     if checkpoint_dir is None:
         raise ValueError("checkpoint_dir is required when checkpointing is enabled.")
     safe = re.sub(r"[^0-9A-Za-z._-]+", "_", checkpoint_id).strip("._") or fingerprint[:20]
+    if len(safe) > MAX_CHECKPOINT_NAME_LENGTH:
+        suffix = hashlib.sha256(safe.encode("utf-8")).hexdigest()[:12]
+        safe = f"{safe[: MAX_CHECKPOINT_NAME_LENGTH - len(suffix) - 1]}-{suffix}"
     return Path(checkpoint_dir).resolve() / f"{safe}.json"
+
+
+def _acquire_checkpoint_lock(path: Path | None, cancellation_callback) -> FileLock | None:
+    if path is None:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(str(path) + ".lock")
+    while True:
+        try:
+            lock.acquire(timeout=0.25)
+            return lock
+        except Timeout:
+            if cancellation_callback is not None:
+                cancellation_callback()
 
 
 def _load_checkpoint(path: Path | None, fingerprint: str) -> tuple[dict[int, TranscriptPayload], str]:
     if path is None or not path.exists():
         return {}, "new"
     data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schema") != "t8.moss-long-audio-checkpoint.v1":
+    if data.get("schema") != CHECKPOINT_SCHEMA:
         raise ValueError(f"Unsupported checkpoint schema: {path}")
     if data.get("fingerprint") != fingerprint:
         return {}, "configuration_changed"
@@ -531,14 +579,19 @@ def _save_checkpoint(
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schema": "t8.moss-long-audio-checkpoint.v1",
+        "schema": CHECKPOINT_SCHEMA,
         "fingerprint": fingerprint,
         "chunks": [asdict(chunk) for chunk in chunks],
         "completed": {str(index): item.to_dict() for index, item in sorted(completed.items())},
     }
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+    write_lock = FileLock(str(path) + ".write.lock")
+    with write_lock:
+        try:
+            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 __all__ = ["AudioChunk", "merge_chunk_payloads", "plan_audio_chunks", "transcribe_long_audio"]

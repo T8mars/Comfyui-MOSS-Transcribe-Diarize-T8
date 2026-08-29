@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
@@ -84,6 +85,30 @@ def test_model_directory_discovery_and_validation(tmp_path: Path, monkeypatch):
     assert model_store.validate_model_dir(model_dir).mismatched == ("tokenizer.json",)
 
 
+def test_explicit_sha256_verification_never_reuses_a_stale_digest(tmp_path: Path, monkeypatch):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    path = model_dir / "weights.bin"
+    original = b"a" * 32
+    replacement = b"b" * 32
+    path.write_bytes(original)
+    original_stat = path.stat()
+    monkeypatch.setattr(
+        model_store,
+        "load_manifest",
+        lambda: {"revision": "fixed", "files": {"weights.bin": _metadata(original)}},
+    )
+
+    assert model_store.validate_model_dir(model_dir, verify_hashes=True).valid
+    original_fingerprint = model_store.model_fingerprint(model_dir)
+    path.write_bytes(replacement)
+    os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    assert model_store._sha256(path) == hashlib.sha256(replacement).hexdigest()
+    assert model_store.validate_model_dir(model_dir, verify_hashes=True).mismatched == ("weights.bin",)
+    assert model_store.model_fingerprint(model_dir) != original_fingerprint
+
+
 def test_requirements_never_replace_comfyui_torch_stack():
     requirements = (model_store.PLUGIN_ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
     active = [line.strip() for line in requirements.splitlines() if line.strip() and not line.startswith("#")]
@@ -113,7 +138,7 @@ def test_ui_workflows_reference_current_node_package_version():
             for node in payload.get("nodes", [])
             if node.get("properties", {}).get("cnr_id") == "comfyui-moss-transcribe-diarize-t8"
         }
-        assert versions == {"0.3.4"}, f"{path.name} has stale node versions: {versions}"
+        assert versions == {"0.3.5"}, f"{path.name} has stale node versions: {versions}"
 
 
 def test_manifest_is_pinned_to_reviewed_revisions():
@@ -202,6 +227,74 @@ def test_model_cache_normalizes_equivalent_cpu_precision(tmp_path: Path):
     automatic = types_module.ModelHandle(precision="auto", **common)
     explicit = types_module.ModelHandle(precision="float32", **common)
     assert model_cache.ModelCache._resolved(automatic)[2] == model_cache.ModelCache._resolved(explicit)[2]
+
+
+def test_bf16_capability_is_checked_inside_the_requested_cuda_device(monkeypatch):
+    model_cache = importlib.import_module(f"{PACKAGE_NAME}.runtime.model_cache")
+    torch = importlib.import_module("torch")
+    active = {"index": 0}
+    checked = []
+
+    class DeviceContext:
+        def __init__(self, index):
+            self.index = index
+            self.previous = None
+
+        def __enter__(self):
+            self.previous = active["index"]
+            active["index"] = self.index
+
+        def __exit__(self, *_args):
+            active["index"] = self.previous
+
+    monkeypatch.setattr(torch.cuda, "device", DeviceContext)
+
+    def supported():
+        checked.append(active["index"])
+        return active["index"] == 3
+
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", supported)
+
+    assert model_cache._cuda_bf16_supported(torch.device("cuda:3")) is True
+    assert checked == [3]
+    assert active["index"] == 0
+
+
+def test_model_cache_discards_idle_load_gates_after_success_and_failure(tmp_path: Path, monkeypatch):
+    model_cache = importlib.import_module(f"{PACKAGE_NAME}.runtime.model_cache")
+    compat = importlib.import_module(
+        f"{PACKAGE_NAME}.vendor.moss_transcribe_diarize.transformers_compat"
+    )
+    types_module = importlib.import_module(f"{PACKAGE_NAME}.runtime.types")
+    cache = model_cache.ModelCache()
+    handle = types_module.ModelHandle(tmp_path, "cpu", "float32", model_revision="fixed")
+
+    class FakeModel:
+        def to(self, _device):
+            return self
+
+        def eval(self):
+            return self
+
+    monkeypatch.setattr(
+        compat,
+        "load_local_model_processor_with_attention",
+        lambda *_args, **_kwargs: (FakeModel(), object(), {"selected": "sdpa"}),
+    )
+    entry = cache.acquire(handle)
+
+    assert cache._load_locks == {}
+    cache.done(handle, entry, release=True)
+
+    failing = model_cache.ModelCache()
+    monkeypatch.setattr(
+        compat,
+        "load_local_model_processor_with_attention",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("load failed")),
+    )
+    with pytest.raises(RuntimeError, match="load failed"):
+        failing.acquire(handle)
+    assert failing._load_locks == {}
 
 
 def test_attention_policy_is_part_of_comfy_model_cache_identity(tmp_path: Path):

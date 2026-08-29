@@ -316,6 +316,7 @@ def _retry_reason(validation, retry_policy: str) -> str | None:
         "repeated_text",
         "possible_early_stop",
         "possible_silence_hallucination",
+        "timestamp_out_of_range",
     }:
         return "quality_failure"
     return None
@@ -323,14 +324,15 @@ def _retry_reason(validation, retry_policy: str) -> str | None:
 
 def _validation_rank(validation) -> tuple[int, int, int, int, float, int]:
     errors = sum(item.level == "error" for item in validation.diagnostics)
-    risk_codes = {
-        "speaker_tag_missing",
-        "repeated_text",
-        "possible_early_stop",
-        "possible_silence_hallucination",
-        "token_limit_reached",
+    risk_weights = {
+        "speaker_tag_missing": 1,
+        "repeated_text": 2,
+        "possible_early_stop": 2,
+        "possible_silence_hallucination": 3,
+        "token_limit_reached": 2,
+        "timestamp_out_of_range": 4,
     }
-    risks = sum(item.code in risk_codes for item in validation.diagnostics)
+    risks = sum(risk_weights.get(item.code, 0) for item in validation.diagnostics)
     unknown_speakers = sum(item.speaker == "S00" for item in validation.segments)
     last_end = max((item.end for item in validation.segments), default=0.0)
     return (int(validation.valid), -errors, -risks, -unknown_speakers, last_end, len(validation.segments))

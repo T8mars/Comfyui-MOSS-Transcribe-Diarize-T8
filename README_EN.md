@@ -31,7 +31,7 @@ The model is pinned to Hugging Face revision `e8681d68e7042738ffca8ac8212bc8fcb1
 - Transcript Parsing and Validation: checks output structure, timestamp ordering and bounds, and token limits. Valid segments without speaker labels are retained as unknown speaker `S00` and reported as warnings.
 - Transcript Quality Gate: returns a usability decision and JSON report from end coverage, unknown-speaker ratio, repetition loops, truncation, and structural errors.
 - Subtitle Style: configures video resolution, automatic or fixed font size, font, alignment, margins, outline, shadow, and per-speaker colors.
-- Subtitle Export: accepts an optional subtitle style, supports speaker renaming and explicit manual mapping across chunks, exports JSON/TXT/SRT/ASS, and can write to the ComfyUI `output` directory.
+- Subtitle Export: accepts an optional subtitle style, supports speaker renaming and explicit manual mapping across chunks, exports JSON/TXT/SRT/ASS, and can write to the ComfyUI `output` directory. JSON keeps the stable `speaker` ID and adds `speaker_name` when a rename is configured.
 - Environment Diagnostics and Model Release: reports Transformers/PyTorch/CUDA/VRAM information and releases only models cached by this node pack.
 
 Cross-chunk mapping keys use the actual chunk ID and local speaker ID, for example `{"part001:S01":"Host"}`. Subtitle Export automatically applies that mapping to the namespaced speaker ID in the merged long-audio transcript.
@@ -49,7 +49,7 @@ This project is not an official OpenMOSS/MOSI distribution. See `LICENSE`, `DISC
 ## Verified Environment and Normal-Path Tests
 
 - Windows 11 x64, Python 3.12.13, PyTorch 2.8.0+cu128, and Transformers 5.15.1.
-- ComfyUI revision `5ab2f7a2d676c1fb7b410c22e82e2ed8f217b56c`; all nine V3 nodes registered independently, with 47 automated tests covering the new features and compatibility paths.
+- ComfyUI revision `5ab2f7a2d676c1fb7b410c22e82e2ed8f217b56c`; all nine V3 nodes registered independently, with 65 automated tests covering the new features and compatibility paths.
 - RTX 5090 Laptop 24 GB, BF16, with the locally pinned model revision.
 
 | Input length | Runtime | Peak VRAM | Generated tokens | Result |

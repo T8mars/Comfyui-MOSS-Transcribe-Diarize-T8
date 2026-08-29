@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Iterable
 
 from .layout import assign_overlap_lanes
@@ -18,10 +19,36 @@ SPEAKER_COLORS = [
     "&H00FF8EDB",
     "&H00D8D8D8",
 ]
+_ASS_COLOR_PATTERN = re.compile(r"^&H[0-9A-Fa-f]{8}$")
 
 
-def export_json(segments: Iterable[SubtitleSegment], *, indent: int = 2) -> str:
-    return json.dumps([segment.to_dict() for segment in segments], ensure_ascii=False, indent=indent) + "\n"
+def validate_ass_style(style: SubtitleStyle) -> SubtitleStyle:
+    font_name = str(style.font_name)
+    if not font_name.strip():
+        raise ValueError("ASS font_name must not be empty.")
+    if any(character in font_name for character in (",", "\r", "\n")):
+        raise ValueError("ASS font_name must not contain commas or line breaks.")
+    for field_name in ("primary_color", "outline_color", "back_color"):
+        value = str(getattr(style, field_name))
+        if _ASS_COLOR_PATTERN.fullmatch(value) is None:
+            raise ValueError(f"ASS {field_name} must use &HAABBGGRR format.")
+    return style
+
+
+def export_json(
+    segments: Iterable[SubtitleSegment],
+    *,
+    speaker_names: dict[str, str] | None = None,
+    indent: int = 2,
+) -> str:
+    payload = []
+    for segment in segments:
+        item = segment.to_dict()
+        speaker_name = (speaker_names or {}).get(segment.speaker)
+        if speaker_name:
+            item["speaker_name"] = speaker_name
+        payload.append(item)
+    return json.dumps(payload, ensure_ascii=False, indent=indent) + "\n"
 
 
 def export_srt(
@@ -52,7 +79,7 @@ def export_ass(
     video_width: int | None = None,
     video_height: int | None = None,
 ) -> str:
-    style = style or SubtitleStyle()
+    style = validate_ass_style(style or SubtitleStyle())
     video_width = int(video_width or style.video_width)
     video_height = int(video_height or style.video_height)
     font_size = style.font_size or max(24, round(video_height * 0.045))
@@ -128,6 +155,17 @@ def _ass_style_line(name: str, style: SubtitleStyle, font_size: int, primary_col
         f"{style.back_color},0,0,0,0,100,100,0,0,1,{style.outline},{style.shadow},"
         f"{style.alignment},48,48,{style.margin_v},1"
     )
+
+
+__all__ = [
+    "export_ass",
+    "export_json",
+    "export_srt",
+    "format_ass_time",
+    "format_srt_time",
+    "validate_ass_style",
+    "write_text",
+]
 
 
 def _speaker_style_name(speaker: str) -> str:

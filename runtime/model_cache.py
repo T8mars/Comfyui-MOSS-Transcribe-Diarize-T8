@@ -26,13 +26,16 @@ class CacheEntry:
     release_requested: bool = False
 
 
+@dataclass(slots=True)
+class LoadGate:
+    lock: threading.Lock
+    users: int = 0
+
+
 def _cuda_bf16_supported(device: torch.device) -> bool:
     index = device.index if device.index is not None else torch.cuda.current_device()
-    try:
-        return bool(torch.cuda.is_bf16_supported(index))
-    except TypeError:
-        with torch.cuda.device(index):
-            return bool(torch.cuda.is_bf16_supported())
+    with torch.cuda.device(index):
+        return bool(torch.cuda.is_bf16_supported())
 
 
 def resolve_dtype(precision: str, device: torch.device) -> torch.dtype:
@@ -54,7 +57,7 @@ def resolve_dtype(precision: str, device: torch.device) -> torch.dtype:
 class ModelCache:
     def __init__(self):
         self._entries: dict[CacheKey, CacheEntry] = {}
-        self._load_locks: dict[LoadLockKey, threading.Lock] = {}
+        self._load_locks: dict[LoadLockKey, LoadGate] = {}
         self._lock = threading.RLock()
 
     @staticmethod
@@ -90,55 +93,65 @@ class ModelCache:
             if entry is not None:
                 entry.users += 1
                 return entry
-            load_lock = self._load_locks.setdefault(self._runtime_key(key), threading.Lock())
+            runtime_key = self._runtime_key(key)
+            gate = self._load_locks.setdefault(runtime_key, LoadGate(threading.Lock()))
+            gate.users += 1
 
-        with load_lock:
-            with self._lock:
-                self._retire_superseded_locked(key)
-                entry = self._entries.get(key)
-                if entry is not None:
-                    entry.users += 1
-                    return entry
+        try:
+            with gate.lock:
+                with self._lock:
+                    self._retire_superseded_locked(key)
+                    entry = self._entries.get(key)
+                    if entry is not None:
+                        entry.users += 1
+                        return entry
 
-            from ..vendor.moss_transcribe_diarize.transformers_compat import load_local_model_processor_with_attention
-
-            self._coordinate_comfy_memory(device)
-            try:
-                model, processor, attention_report = load_local_model_processor_with_attention(
-                    handle.model_dir,
-                    device=device,
-                    load_dtype=dtype,
-                    attention_implementation=handle.attention_implementation,
+                from ..vendor.moss_transcribe_diarize.transformers_compat import (
+                    load_local_model_processor_with_attention,
                 )
-                model = model.to(device).eval()
-            except torch.cuda.OutOfMemoryError as exc:
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                free, total = 0, 0
-                if device.type == "cuda":
-                    try:
-                        free, total = torch.cuda.mem_get_info(device)
-                    except (TypeError, RuntimeError):
-                        index = device.index if device.index is not None else torch.cuda.current_device()
-                        with torch.cuda.device(index):
-                            free, total = torch.cuda.mem_get_info()
-                raise RuntimeError(
-                    f"MOSS 模型加载显存不足：可用 {free / 1024**3:.2f}GB / 总计 {total / 1024**3:.2f}GB。"
-                    "请先释放其他 ComfyUI 模型、缩短音频或启用转写后释放。"
-                ) from exc
-            entry = CacheEntry(
-                key,
-                model,
-                processor,
-                device,
-                dtype,
-                threading.RLock(),
-                attention_report,
-                users=1,
-            )
+
+                self._coordinate_comfy_memory(device)
+                try:
+                    model, processor, attention_report = load_local_model_processor_with_attention(
+                        handle.model_dir,
+                        device=device,
+                        load_dtype=dtype,
+                        attention_implementation=handle.attention_implementation,
+                    )
+                    model = model.to(device).eval()
+                except torch.cuda.OutOfMemoryError as exc:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    free, total = 0, 0
+                    if device.type == "cuda":
+                        try:
+                            free, total = torch.cuda.mem_get_info(device)
+                        except (TypeError, RuntimeError):
+                            index = device.index if device.index is not None else torch.cuda.current_device()
+                            with torch.cuda.device(index):
+                                free, total = torch.cuda.mem_get_info()
+                    raise RuntimeError(
+                        f"MOSS 模型加载显存不足：可用 {free / 1024**3:.2f}GB / 总计 {total / 1024**3:.2f}GB。"
+                        "请先释放其他 ComfyUI 模型、缩短音频或启用转写后释放。"
+                    ) from exc
+                entry = CacheEntry(
+                    key,
+                    model,
+                    processor,
+                    device,
+                    dtype,
+                    threading.RLock(),
+                    attention_report,
+                    users=1,
+                )
+                with self._lock:
+                    self._entries[key] = entry
+                return entry
+        finally:
             with self._lock:
-                self._entries[key] = entry
-            return entry
+                gate.users = max(0, gate.users - 1)
+                if gate.users == 0 and self._load_locks.get(runtime_key) is gate:
+                    self._load_locks.pop(runtime_key, None)
 
     def _retire_superseded_locked(self, current_key: CacheKey) -> None:
         for key, entry in list(self._entries.items()):
@@ -226,4 +239,4 @@ class ModelCache:
 
 MODEL_CACHE = ModelCache()
 
-__all__ = ["CacheEntry", "MODEL_CACHE", "ModelCache", "resolve_dtype"]
+__all__ = ["CacheEntry", "LoadGate", "MODEL_CACHE", "ModelCache", "_cuda_bf16_supported", "resolve_dtype"]

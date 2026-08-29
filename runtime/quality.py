@@ -59,6 +59,8 @@ def evaluate_quality_components(
     reasons: list[str] = []
     if not items or error_count:
         reasons.append("invalid_transcript")
+    if "timestamp_out_of_range" in codes:
+        reasons.append("timestamp_out_of_range")
     if media_duration is not None and media_duration >= 30 and end_coverage is not None and end_coverage < min_end_coverage:
         reasons.append("insufficient_end_coverage")
     if unknown_ratio > max_unknown_speaker_ratio:

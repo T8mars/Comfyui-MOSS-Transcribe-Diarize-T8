@@ -4,7 +4,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 import re
 
-from .transcript_parser import TranscriptSegment, parse_transcript
+from .transcript_parser import TranscriptSegment, TranscriptStreamParser
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +39,12 @@ def validate_transcript(
     audio_rms: float | None = None,
 ) -> TranscriptValidation:
     diagnostics: list[TranscriptDiagnostic] = []
-    segments = tuple(parse_transcript(text))
+    parser = TranscriptStreamParser()
+    parsed_segments = parser.feed(text)
+    had_malformed_input = parser.had_malformed_input
+    has_incomplete_segment = parser.has_incomplete_segment
+    parsed_segments.extend(parser.close())
+    segments = tuple(parsed_segments)
     if not text.strip():
         diagnostics.append(TranscriptDiagnostic("error", "empty_output", "The model returned no text."))
     elif not segments:
@@ -50,6 +55,23 @@ def validate_transcript(
                 "No complete [start][Sxx]text[end] segment could be parsed.",
             )
         )
+    else:
+        if had_malformed_input:
+            diagnostics.append(
+                TranscriptDiagnostic(
+                    "error",
+                    "invalid_format",
+                    "Malformed non-whitespace content was discarded between transcript segments.",
+                )
+            )
+        if has_incomplete_segment:
+            diagnostics.append(
+                TranscriptDiagnostic(
+                    "error",
+                    "incomplete_segment",
+                    "The transcript ended before the final segment was complete.",
+                )
+            )
 
     previous_start = -1.0
     unlabelled_count = sum(1 for segment in segments if segment.speaker == "S00")

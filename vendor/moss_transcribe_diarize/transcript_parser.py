@@ -62,8 +62,14 @@ class TranscriptStreamParser:
         self._end: float | None = None
         self._end_token = ""
         self._speaker: str | None = None
+        self._had_malformed_input = False
 
     def reset(self) -> None:
+        """Clear the active segment and all stream-level parse status."""
+        self._reset_segment()
+        self._had_malformed_input = False
+
+    def _reset_segment(self) -> None:
         self._state = self._SEEK_START
         self._token.clear()
         self._text.clear()
@@ -72,6 +78,20 @@ class TranscriptStreamParser:
         self._end = None
         self._end_token = ""
         self._speaker = None
+
+    @property
+    def had_malformed_input(self) -> bool:
+        """Whether non-whitespace input was discarded while recovering."""
+        return self._had_malformed_input
+
+    @property
+    def has_incomplete_segment(self) -> bool:
+        """Whether the stream currently ends inside an unfinished segment."""
+        return self._state not in {self._SEEK_START, self._AFTER_END}
+
+    def _discard_malformed_segment(self) -> None:
+        self._had_malformed_input = True
+        self._reset_segment()
 
     def feed(self, chunk: str) -> list[TranscriptSegment]:
         """Consume a text chunk and return any newly completed segments."""
@@ -117,12 +137,14 @@ class TranscriptStreamParser:
         if ch == "[":
             self._token.clear()
             self._state = self._READ_START
+        elif not ch.isspace():
+            self._had_malformed_input = True
 
     def _read_start(self, ch: str) -> None:
         if ch == "]":
             start = _parse_timestamp(self._token)
             if start is None:
-                self.reset()
+                self._discard_malformed_segment()
                 return
             self._start = start
             self._state = self._EXPECT_SPEAKER_OPEN
@@ -134,7 +156,7 @@ class TranscriptStreamParser:
             if len(self._token) <= 32:
                 return
 
-        self.reset()
+        self._discard_malformed_segment()
         if ch == "[":
             self._state = self._READ_START
 
@@ -148,13 +170,13 @@ class TranscriptStreamParser:
             self._state = self._READ_TEXT
             self._read_text(ch)
         elif not ch.isspace():
-            self.reset()
+            self._discard_malformed_segment()
 
     def _read_speaker(self, ch: str) -> None:
         if ch == "]":
             speaker = _parse_speaker(self._token)
             if speaker is None:
-                self.reset()
+                self._discard_malformed_segment()
                 return
             self._speaker = speaker
             self._text.clear()
@@ -167,7 +189,7 @@ class TranscriptStreamParser:
             if len(self._token) <= 16:
                 return
 
-        self.reset()
+        self._discard_malformed_segment()
         if ch == "[":
             self._state = self._READ_START
 
@@ -228,7 +250,7 @@ class TranscriptStreamParser:
 
     def _emit_segment(self, emit: Callable[[TranscriptSegment], None]) -> None:
         if self._start is None or self._end is None or self._speaker is None:
-            self.reset()
+            self._discard_malformed_segment()
             return
 
         text = "".join(self._text)
@@ -244,14 +266,7 @@ class TranscriptStreamParser:
                 )
             )
 
-        self._token.clear()
-        self._text.clear()
-        self._pending_after_end.clear()
-        self._start = None
-        self._end = None
-        self._end_token = ""
-        self._speaker = None
-        self._state = self._SEEK_START
+        self._reset_segment()
 
 
 def iter_transcript_segments(chunks: Iterable[str], **parser_kwargs) -> Iterator[TranscriptSegment]:
