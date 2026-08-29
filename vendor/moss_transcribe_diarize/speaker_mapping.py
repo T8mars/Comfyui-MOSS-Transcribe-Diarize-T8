@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 
 def normalize_speaker_mapping(value: Mapping | None) -> dict[str, str]:
@@ -22,6 +22,7 @@ def resolve_speaker_names(
     cross_chunk_mapping: Mapping | None,
     *,
     chunk_id: str = "",
+    segments: Iterable[Mapping] | None = None,
 ) -> dict[str, str]:
     names = normalize_speaker_mapping(local_names)
     mapping = normalize_speaker_mapping(cross_chunk_mapping)
@@ -32,6 +33,15 @@ def resolve_speaker_names(
                 names[key[len(prefix):]] = target
         else:
             names[key] = target
+    for segment in segments or ():
+        segment_chunk = str(segment.get("chunk_id") or "").strip()
+        local_speaker = str(segment.get("local_speaker") or "").strip()
+        merged_speaker = str(segment.get("speaker") or "").strip()
+        if not (segment_chunk and local_speaker and merged_speaker):
+            continue
+        target = mapping.get(f"{segment_chunk}:{local_speaker}")
+        if target:
+            names[merged_speaker] = target
     return names
 
 

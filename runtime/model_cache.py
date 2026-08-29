@@ -9,9 +9,13 @@ import torch
 from .types import ModelHandle
 
 
+CacheKey = tuple[str, str, str, str, str]
+LoadLockKey = tuple[str, str, str, str]
+
+
 @dataclass(slots=True)
 class CacheEntry:
-    cache_key: tuple[str, str, str, str]
+    cache_key: CacheKey
     model: object
     processor: object
     device: torch.device
@@ -49,12 +53,12 @@ def resolve_dtype(precision: str, device: torch.device) -> torch.dtype:
 
 class ModelCache:
     def __init__(self):
-        self._entries: dict[tuple[str, str, str, str], CacheEntry] = {}
-        self._load_locks: dict[tuple[str, str, str, str], threading.Lock] = {}
+        self._entries: dict[CacheKey, CacheEntry] = {}
+        self._load_locks: dict[LoadLockKey, threading.Lock] = {}
         self._lock = threading.RLock()
 
     @staticmethod
-    def _resolved(handle: ModelHandle) -> tuple[torch.device, torch.dtype, tuple[str, str, str, str]]:
+    def _resolved(handle: ModelHandle) -> tuple[torch.device, torch.dtype, CacheKey]:
         from ..vendor.moss_transcribe_diarize.inference_utils import resolve_device
         from ..vendor.moss_transcribe_diarize.attention import normalize_attention_implementation
 
@@ -63,7 +67,8 @@ class ModelCache:
             raise RuntimeError("当前 ComfyUI 的 PyTorch 未检测到 CUDA。")
         dtype = resolve_dtype(handle.precision, device)
         attention = normalize_attention_implementation(handle.attention_implementation)
-        key = (str(handle.model_dir.resolve()), str(device), str(dtype), attention)
+        identity = handle.model_fingerprint or handle.model_revision
+        key = (str(handle.model_dir.resolve()), str(device), str(dtype), identity, attention)
         return device, dtype, key
 
     @staticmethod
@@ -80,14 +85,16 @@ class ModelCache:
     def acquire(self, handle: ModelHandle) -> CacheEntry:
         device, dtype, key = self._resolved(handle)
         with self._lock:
+            self._retire_superseded_locked(key)
             entry = self._entries.get(key)
             if entry is not None:
                 entry.users += 1
                 return entry
-            load_lock = self._load_locks.setdefault(key, threading.Lock())
+            load_lock = self._load_locks.setdefault(self._runtime_key(key), threading.Lock())
 
         with load_lock:
             with self._lock:
+                self._retire_superseded_locked(key)
                 entry = self._entries.get(key)
                 if entry is not None:
                     entry.users += 1
@@ -133,6 +140,19 @@ class ModelCache:
                 self._entries[key] = entry
             return entry
 
+    def _retire_superseded_locked(self, current_key: CacheKey) -> None:
+        for key, entry in list(self._entries.items()):
+            if key[0] != current_key[0] or key[3] == current_key[3]:
+                continue
+            entry.release_requested = True
+            if entry.users == 0:
+                self._entries.pop(key, None)
+                self._dispose(entry)
+
+    @staticmethod
+    def _runtime_key(key: CacheKey) -> LoadLockKey:
+        return (*key[:3], key[4])
+
     def done(self, handle: ModelHandle, entry: CacheEntry, *, release: bool = False) -> None:
         policy = handle.effective_memory_policy
         release = release or policy == "release_after_run"
@@ -176,7 +196,8 @@ class ModelCache:
                     "model_dir": key[0],
                     "device": key[1],
                     "precision": key[2],
-                    "attention_requested": key[3],
+                    "model_identity": key[3],
+                    "attention_requested": key[4],
                     "attention": entry.attention_report,
                     "users": entry.users,
                     "release_requested": entry.release_requested,

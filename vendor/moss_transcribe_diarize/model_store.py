@@ -11,6 +11,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from filelock import FileLock
+from huggingface_hub import constants as hf_hub_constants
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -295,8 +296,7 @@ def _directory_bytes(path: Path) -> int:
 
 
 def _download_telemetry_base(manifest: ModelManifest, target: Path, verify_hashes: bool) -> dict[str, Any]:
-    endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
-    endpoint_host = urlsplit(endpoint).hostname or "custom"
+    endpoint_host = urlsplit(hf_hub_constants.ENDPOINT).hostname or "custom"
     return {
         "schema": "t8.moss-download.v1",
         "started_utc": _utc_now(),
@@ -305,8 +305,7 @@ def _download_telemetry_base(manifest: ModelManifest, target: Path, verify_hashe
         "audited_code_revision": manifest.code_revision,
         "download_backend": "huggingface_hub",
         "endpoint_host": endpoint_host,
-        "proxy_configured": any(os.environ.get(name) for name in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY")),
-        "offline_mode": any(os.environ.get(name) == "1" for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")),
+        "offline_mode": bool(hf_hub_constants.HF_HUB_OFFLINE),
         "verify_hashes_requested": verify_hashes,
         "target_volume": target.drive or target.anchor,
         "remote_analytics": False,

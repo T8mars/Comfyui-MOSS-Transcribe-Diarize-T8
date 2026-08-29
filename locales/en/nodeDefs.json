@@ -18,7 +18,7 @@
       },
       "attention_implementation": {
         "name": "Attention backend",
-        "tooltip": "Auto follows the upstream/Transformers default and records the resolved backend. Explicit backends fail clearly instead of silently falling back."
+        "tooltip": "Auto explicitly tries FlashAttention-2, SDPA, and eager in order and records the result. Explicit backends fail clearly instead of silently falling back."
       },
       "custom_model_path": { "name": "Custom absolute model path" }
     },

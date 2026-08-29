@@ -5,6 +5,7 @@ import logging
 import platform
 import re
 import time
+import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -82,6 +83,10 @@ def _subtitle_outputs(payload: TranscriptPayload) -> tuple[str, str]:
     return export_srt(segments), export_ass(segments)
 
 
+def _unique_output_stem(safe_prefix: str) -> str:
+    return f"{safe_prefix}_{time.time_ns()}_{uuid.uuid4().hex[:8]}"
+
+
 class T8MossModelLoader(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -129,7 +134,7 @@ class T8MossModelLoader(io.ComfyNode):
                     options=[AUTO_ATTENTION_IMPLEMENTATION, *ATTENTION_IMPLEMENTATIONS],
                     default=AUTO_ATTENTION_IMPLEMENTATION,
                     advanced=True,
-                    tooltip="auto 跟随上游/Transformers 默认并记录实际结果；显式后端失败时直接报错，不静默回退。",
+                    tooltip="auto 按 FlashAttention-2、SDPA、eager 顺序显式尝试并记录结果；显式后端失败时直接报错，不静默回退。",
                 ),
                 io.String.Input(
                     "custom_model_path",
@@ -212,6 +217,7 @@ class T8MossModelLoader(io.ComfyNode):
             precision=precision,
             release_after_run=bool(release_after_run),
             model_revision=manifest["revision"],
+            model_fingerprint=model_fingerprint(model_dir),
             memory_policy=memory_policy,
             attention_implementation=attention_implementation,
         )
@@ -775,7 +781,7 @@ class T8MossSubtitleExport(io.ComfyNode):
                     "cross_chunk_speaker_map_json",
                     display_name="跨分片说话人映射 JSON",
                     multiline=True,
-                    default='{"part1:S01": "主持人", "part2:S02": "主持人"}',
+                    default='{"part001:S01": "主持人", "part002:S02": "主持人"}',
                     dynamic_prompts=False,
                     advanced=True,
                 ),
@@ -814,7 +820,12 @@ class T8MossSubtitleExport(io.ComfyNode):
             raise ValueError(f"跨分片说话人映射 JSON 无效：{exc}") from exc
         if not isinstance(cross_chunk_mapping, dict):
             raise ValueError("跨分片说话人映射必须是 JSON 对象。")
-        names = resolve_speaker_names(names, cross_chunk_mapping, chunk_id=chunk_id)
+        names = resolve_speaker_names(
+            names,
+            cross_chunk_mapping,
+            chunk_id=chunk_id,
+            segments=transcript.segments,
+        )
         segments = _subtitle_segments(transcript)
         style = replace(
             style or SubtitleStyle(),
@@ -834,7 +845,7 @@ class T8MossSubtitleExport(io.ComfyNode):
             safe_prefix = re.sub(r"[^0-9A-Za-z._\u4e00-\u9fff-]+", "_", filename_prefix).strip("._") or "moss_transcript"
             output_dir = Path(folder_paths.get_output_directory()).resolve() / "moss_transcribe_diarize"
             output_dir.mkdir(parents=True, exist_ok=True)
-            stem = f"{safe_prefix}_{int(time.time() * 1000)}"
+            stem = _unique_output_stem(safe_prefix)
             payloads = {"json": json_text, "txt": txt_text, "srt": srt_text, "ass": ass_text}
             for kind, text in payloads.items():
                 path = output_dir / f"{stem}.{kind}"

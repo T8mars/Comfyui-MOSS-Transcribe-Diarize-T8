@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -19,12 +18,6 @@ from vendor.moss_transcribe_diarize.model_store import (  # noqa: E402
 
 
 def discover_comfyui_root() -> Path | None:
-    configured = os.environ.get("COMFYUI_ROOT", "").strip()
-    if configured:
-        candidate = Path(configured).expanduser().resolve()
-        if (candidate / "models").is_dir() or (candidate / "main.py").is_file():
-            return candidate
-
     # Normal Git/ZIP install: ComfyUI/custom_nodes/<this package>.
     custom_nodes = PLUGIN_ROOT.parent
     if custom_nodes.name.lower() == "custom_nodes":

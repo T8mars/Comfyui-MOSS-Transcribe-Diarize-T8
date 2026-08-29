@@ -193,12 +193,20 @@ def transcribe_long_audio(
         budgets,
         split_strategy=split_strategy,
         overlap_seconds=overlap_seconds,
+        silence_policy=silence_policy,
+        preflight_backend=preflight_backend,
+        vad_aggressiveness=vad_aggressiveness,
         retry_policy=retry_policy,
     )
     checkpoint_path = _checkpoint_path(checkpoint_dir, checkpoint_id, fingerprint, checkpoint_mode)
     if checkpoint_mode == "restart" and checkpoint_path is not None and checkpoint_path.exists():
         checkpoint_path.unlink()
-    completed = _load_checkpoint(checkpoint_path, fingerprint) if checkpoint_mode == "read_write" else {}
+    if checkpoint_mode == "read_write":
+        completed, checkpoint_status = _load_checkpoint(checkpoint_path, fingerprint)
+    elif checkpoint_mode == "restart":
+        completed, checkpoint_status = {}, "restarted"
+    else:
+        completed, checkpoint_status = {}, "off"
 
     total_budget = max(1, sum(budgets))
     progress, cancellation = _comfy_runtime_callbacks(total_budget)
@@ -253,6 +261,7 @@ def transcribe_long_audio(
             "overlap_seconds": overlap_seconds,
             "checkpoint": str(checkpoint_path) if checkpoint_path is not None else None,
             "checkpoint_fingerprint": fingerprint,
+            "checkpoint_status": checkpoint_status,
             "resumed_chunks": sorted(completed),
         }
     )
@@ -262,6 +271,7 @@ def transcribe_long_audio(
         "chunks": [asdict(chunk) for chunk in chunks],
         "resumed_chunks": sorted(completed),
         "checkpoint": str(checkpoint_path) if checkpoint_path is not None else None,
+        "checkpoint_status": checkpoint_status,
         "quality": merged.metadata["quality"],
     }
     return merged, report
@@ -278,6 +288,7 @@ def merge_chunk_payloads(
     merged_segments: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
     chunk_reports: list[dict[str, Any]] = []
+    chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
 
     for chunk, payload in zip(chunks, payloads, strict=True):
         for diagnostic in payload.diagnostics:
@@ -303,7 +314,7 @@ def merge_chunk_payloads(
             }
             if candidate["end"] < candidate["start"]:
                 candidate["end"] = candidate["start"]
-            if _is_overlap_duplicate(candidate, merged_segments):
+            if _is_overlap_duplicate(candidate, merged_segments, chunks_by_id):
                 continue
             merged_segments.append(candidate)
 
@@ -329,24 +340,108 @@ def merge_chunk_payloads(
             "sample_rate": 16000,
             "speaker_scope": "chunk_namespaced",
             "chunks": chunk_reports,
+            "audio_preflight": _aggregate_audio_preflight(chunks, payloads),
         },
     )
 
 
-def _is_overlap_duplicate(candidate: dict[str, Any], previous: list[dict[str, Any]]) -> bool:
+def _aggregate_audio_preflight(
+    chunks: list[AudioChunk],
+    payloads: list[TranscriptPayload],
+) -> dict[str, Any] | None:
+    weighted_speech = 0.0
+    weighted_seconds = 0.0
+    backends: set[str] = set()
+    classifications: list[str] = []
+    preflight_chunk_count = 0
+    for chunk, payload in zip(chunks, payloads, strict=True):
+        preflight = payload.metadata.get("audio_preflight")
+        if not isinstance(preflight, dict):
+            continue
+        try:
+            speech_ratio = min(1.0, max(0.0, float(preflight["speech_ratio"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+        weight = max(0.0, chunk.duration_seconds)
+        weighted_speech += speech_ratio * weight
+        weighted_seconds += weight
+        preflight_chunk_count += 1
+        backend = str(preflight.get("vad_backend") or preflight.get("backend") or "").strip()
+        classification = str(preflight.get("classification") or "").strip()
+        if backend:
+            backends.add(backend)
+        if classification:
+            classifications.append(classification)
+    if weighted_seconds <= 0:
+        return None
+    speech_ratio = weighted_speech / weighted_seconds
+    return {
+        "backend": "chunk_aggregate",
+        "source_backends": sorted(backends),
+        "classification": _aggregate_preflight_classification(speech_ratio, classifications),
+        "speech_ratio": speech_ratio,
+        "chunk_count": preflight_chunk_count,
+    }
+
+
+def _aggregate_preflight_classification(speech_ratio: float, classifications: list[str]) -> str:
+    if classifications and all(item == "silent" for item in classifications):
+        return "silent"
+    if speech_ratio < 0.02:
+        return "non_speech"
+    if speech_ratio < 0.10:
+        return "mostly_silence"
+    return "speech"
+
+
+def _is_overlap_duplicate(
+    candidate: dict[str, Any],
+    previous: list[dict[str, Any]],
+    chunks_by_id: dict[str, AudioChunk],
+) -> bool:
     text = _normalize_text(str(candidate.get("text") or ""))
     if not text:
         return True
+    candidate_chunk = chunks_by_id.get(str(candidate.get("chunk_id") or ""))
+    if candidate_chunk is None:
+        return False
     for item in reversed(previous[-20:]):
-        if float(item["end"]) < float(candidate["start"]) - 3.0:
-            break
         if item.get("chunk_id") == candidate.get("chunk_id"):
+            continue
+        previous_chunk = chunks_by_id.get(str(item.get("chunk_id") or ""))
+        if previous_chunk is None:
+            continue
+        overlap_start = max(previous_chunk.start_seconds, candidate_chunk.start_seconds)
+        overlap_end = min(previous_chunk.end_seconds, candidate_chunk.end_seconds)
+        if overlap_end <= overlap_start:
+            continue
+        if not _intersects_window(item, overlap_start, overlap_end):
+            continue
+        if not _intersects_window(candidate, overlap_start, overlap_end):
+            continue
+        if not _segments_overlap_in_time(item, candidate):
             continue
         other = _normalize_text(str(item.get("text") or ""))
         if text == other:
             return True
         if min(len(text), len(other)) >= 12 and SequenceMatcher(None, text, other).ratio() >= 0.90:
             return True
+    return False
+
+
+def _intersects_window(segment: dict[str, Any], start: float, end: float) -> bool:
+    return float(segment["end"]) >= start and float(segment["start"]) <= end
+
+
+def _segments_overlap_in_time(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_start, left_end = float(left["start"]), float(left["end"])
+    right_start, right_end = float(right["start"]), float(right["end"])
+    intersection = min(left_end, right_end) - max(left_start, right_start)
+    if intersection > 0:
+        shorter_duration = min(max(0.0, left_end - left_start), max(0.0, right_end - right_start))
+        return shorter_duration <= 0 or intersection / shorter_duration >= 0.20
+    if left_start == left_end and right_start == right_end:
+        return abs(left_start - right_start) <= 0.25
     return False
 
 
@@ -376,7 +471,11 @@ def _job_fingerprint(
         json.dumps(
             {
                 "model_revision": handle.model_revision,
+                "model_fingerprint": handle.model_fingerprint,
                 "model_dir": str(handle.model_dir.resolve()),
+                "device": handle.device,
+                "precision": handle.precision,
+                "attention_implementation": handle.attention_implementation,
                 "prompt": prompt.text if prompt else "",
                 "chunks": [asdict(chunk) for chunk in chunks],
                 "budgets": budgets,
@@ -403,14 +502,14 @@ def _checkpoint_path(
     return Path(checkpoint_dir).resolve() / f"{safe}.json"
 
 
-def _load_checkpoint(path: Path | None, fingerprint: str) -> dict[int, TranscriptPayload]:
+def _load_checkpoint(path: Path | None, fingerprint: str) -> tuple[dict[int, TranscriptPayload], str]:
     if path is None or not path.exists():
-        return {}
+        return {}, "new"
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("schema") != "t8.moss-long-audio-checkpoint.v1":
         raise ValueError(f"Unsupported checkpoint schema: {path}")
     if data.get("fingerprint") != fingerprint:
-        raise ValueError(f"Checkpoint does not match the current audio/model/config: {path}")
+        return {}, "configuration_changed"
     completed: dict[int, TranscriptPayload] = {}
     for key, item in (data.get("completed") or {}).items():
         completed[int(key)] = TranscriptPayload(
@@ -419,7 +518,7 @@ def _load_checkpoint(path: Path | None, fingerprint: str) -> dict[int, Transcrip
             diagnostics=tuple(item.get("diagnostics") or ()),
             metadata=dict(item.get("metadata") or {}),
         )
-    return completed
+    return completed, "resumed" if completed else "empty"
 
 
 def _save_checkpoint(

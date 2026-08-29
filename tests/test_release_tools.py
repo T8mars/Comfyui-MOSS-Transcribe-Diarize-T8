@@ -28,9 +28,9 @@ def test_revision_targets_use_full_resolvable_urls():
     )
 
 
-def test_release_build_is_reproducible_and_excludes_tests(tmp_path: Path):
-    first = build_release.build_release(tmp_path / "first", expected_tag="v0.3.3")
-    second = build_release.build_release(tmp_path / "second", expected_tag="v0.3.3")
+def test_release_build_is_reproducible_and_excludes_development_only_files(tmp_path: Path):
+    first = build_release.build_release(tmp_path / "first", expected_tag="v0.3.4")
+    second = build_release.build_release(tmp_path / "second", expected_tag="v0.3.4")
     assert [path.name for path in first] == [path.name for path in second]
     assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
 
@@ -41,13 +41,27 @@ def test_release_build_is_reproducible_and_excludes_tests(tmp_path: Path):
     assert "README_EN.md" in names
     assert "requirements-transformers-v5.txt" in names
     assert "requirements-transformers-v4.txt" not in names
-    assert "scripts/build_release.py" in names
+    assert "scripts/download_models.py" in names
+    assert "scripts/build_release.py" not in names
+    assert "scripts/sync_vendor.py" not in names
+    assert "scripts/verify_pinned_revisions.py" not in names
     assert not any(name.startswith("tests/") for name in names)
+    assert not any(name.startswith(".github/") for name in names)
     assert not any("__pycache__" in name for name in names)
     assert not any(name.startswith(".compat/") for name in names)
 
+    with zipfile.ZipFile(archive) as package:
+        packaged_python = "\n".join(
+            package.read(name).decode("utf-8")
+            for name in names
+            if name.endswith(".py")
+        )
+    assert "subprocess.run(" not in packaged_python
+    assert "urllib.request.urlopen(" not in packaged_python
+    assert "os.environ.get(" not in packaged_python
+
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["node_version"] == "0.3.3"
+    assert manifest["node_version"] == "0.3.4"
     assert manifest["upstream_code_revision"] == EXPECTED_CODE_REVISION
     assert manifest["archive"]["name"] == archive.name
     assert manifest["archive"]["sha256"] == build_release.sha256(archive)
@@ -64,6 +78,9 @@ def test_release_and_compatibility_workflows_keep_automatic_delivery_observable(
     assert "needs: release" in release
     assert "Comfy-Org/publish-node-action@" in release
     assert "release_ref:" in retry
+    assert "default: main" not in retry
+    assert "Registry publication cannot continue" in retry
+    assert "exit 1" in retry
     assert "types: [published]" not in retry
     assert 'cron: "15 20 * * 0"' in validate
     assert "GITHUB_STEP_SUMMARY" in validate

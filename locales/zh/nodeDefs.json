@@ -9,7 +9,10 @@
       "release_after_run": { "name": "旧工作流：转写后释放" },
       "verify_hashes": { "name": "完整 SHA-256 校验" },
       "memory_policy": { "name": "显存驻留策略" },
-      "attention_implementation": { "name": "Attention 后端" },
+      "attention_implementation": {
+        "name": "Attention 后端",
+        "tooltip": "Auto 按 FlashAttention-2、SDPA、eager 顺序显式尝试并记录结果；显式后端失败时不会静默回退。"
+      },
       "custom_model_path": { "name": "自定义模型绝对路径" }
     },
     "outputs": { "0": { "name": "MOSS 模型" }, "1": { "name": "模型信息" } }

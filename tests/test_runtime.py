@@ -113,7 +113,7 @@ def test_ui_workflows_reference_current_node_package_version():
             for node in payload.get("nodes", [])
             if node.get("properties", {}).get("cnr_id") == "comfyui-moss-transcribe-diarize-t8"
         }
-        assert versions == {"0.3.3"}, f"{path.name} has stale node versions: {versions}"
+        assert versions == {"0.3.4"}, f"{path.name} has stale node versions: {versions}"
 
 
 def test_manifest_is_pinned_to_reviewed_revisions():
@@ -214,6 +214,60 @@ def test_attention_policy_is_part_of_comfy_model_cache_identity(tmp_path: Path):
     assert auto_key[-1] == "auto"
     assert eager_key[-1] == "eager"
     assert auto_key != eager_key
+
+
+def test_model_fingerprint_is_part_of_comfy_model_cache_identity(tmp_path: Path):
+    model_cache = importlib.import_module(f"{PACKAGE_NAME}.runtime.model_cache")
+    types_module = importlib.import_module(f"{PACKAGE_NAME}.runtime.types")
+    first = types_module.ModelHandle(tmp_path, "cpu", "float32", model_fingerprint="fingerprint-a")
+    updated = types_module.ModelHandle(tmp_path, "cpu", "float32", model_fingerprint="fingerprint-b")
+
+    first_key = model_cache.ModelCache._resolved(first)[2]
+    updated_key = model_cache.ModelCache._resolved(updated)[2]
+
+    assert first_key != updated_key
+    assert first_key[-1] == updated_key[-1] == "auto"
+
+
+def test_model_cache_retires_superseded_idle_weights(tmp_path: Path):
+    import threading
+    import torch
+
+    model_cache = importlib.import_module(f"{PACKAGE_NAME}.runtime.model_cache")
+    types_module = importlib.import_module(f"{PACKAGE_NAME}.runtime.types")
+    cache = model_cache.ModelCache()
+    first = types_module.ModelHandle(
+        tmp_path,
+        "cpu",
+        "float32",
+        model_fingerprint="fingerprint-a",
+        attention_implementation="eager",
+    )
+    updated = types_module.ModelHandle(
+        tmp_path,
+        "cpu",
+        "float32",
+        model_fingerprint="fingerprint-b",
+        attention_implementation="eager",
+    )
+    first_key = cache._resolved(first)[2]
+    updated_key = cache._resolved(updated)[2]
+    entry = model_cache.CacheEntry(
+        first_key,
+        object(),
+        object(),
+        torch.device("cpu"),
+        torch.float32,
+        threading.RLock(),
+        {},
+    )
+    cache._entries[first_key] = entry
+
+    with cache._lock:
+        cache._retire_superseded_locked(updated_key)
+
+    assert first_key not in cache._entries
+    assert entry.model is None and entry.processor is None
 
 
 def test_model_handle_memory_policy_keeps_legacy_release_compatibility(tmp_path: Path):

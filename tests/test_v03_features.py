@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import threading
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,7 +17,9 @@ attention = importlib.import_module(f"{PACKAGE_NAME}.vendor.moss_transcribe_diar
 audio_preflight = importlib.import_module(f"{PACKAGE_NAME}.vendor.moss_transcribe_diarize.audio_preflight")
 inference = importlib.import_module(f"{PACKAGE_NAME}.runtime.inference")
 long_audio = importlib.import_module(f"{PACKAGE_NAME}.runtime.long_audio")
+nodes_module = importlib.import_module(f"{PACKAGE_NAME}.nodes_v3")
 quality = importlib.import_module(f"{PACKAGE_NAME}.runtime.quality")
+speaker_mapping = importlib.import_module(f"{PACKAGE_NAME}.vendor.moss_transcribe_diarize.speaker_mapping")
 subtitle = importlib.import_module(f"{PACKAGE_NAME}.vendor.moss_transcribe_diarize.subtitle")
 types_module = importlib.import_module(f"{PACKAGE_NAME}.runtime.types")
 validation_module = importlib.import_module(
@@ -170,6 +173,89 @@ def test_smart_chunk_planning_merge_and_overlap_deduplication():
     assert [item["speaker"] for item in merged.segments] == ["S001001", "S002002"]
 
 
+def test_long_audio_quality_aggregates_chunk_speech_ratio():
+    chunk = long_audio.AudioChunk(1, "part001", 0, 160000, 0.0, 10.0)
+    payload = types_module.TranscriptPayload(
+        raw_text="",
+        segments=({"start": 0.0, "end": 10.0, "speaker": "S01", "text": "hallucinated speech"},),
+        diagnostics=({"level": "warning", "code": "preflight_non_speech", "message": "no speech"},),
+        metadata={
+            "audio_duration_seconds": 10.0,
+            "audio_preflight": {
+                "vad_backend": "webrtc",
+                "classification": "non_speech",
+                "speech_ratio": 0.0,
+            },
+        },
+    )
+
+    merged = long_audio.merge_chunk_payloads([chunk], [payload], total_duration=10.0)
+    report = quality.evaluate_quality(merged)
+
+    assert merged.metadata["audio_preflight"]["speech_ratio"] == 0.0
+    assert merged.metadata["audio_preflight"]["source_backends"] == ["webrtc"]
+    assert merged.metadata["audio_preflight"]["chunk_count"] == 1
+    assert report["usable"] is False
+    assert "non_speech_hallucination_risk" in report["reasons"]
+
+
+def test_cross_chunk_speaker_mapping_targets_namespaced_long_audio_speakers():
+    chunk = long_audio.AudioChunk(1, "part001", 0, 160000, 0.0, 10.0)
+    payload = _payload(
+        "",
+        ({"start": 0.0, "end": 1.0, "speaker": "S01", "text": "hello"},),
+    )
+    merged = long_audio.merge_chunk_payloads([chunk], [payload], total_duration=10.0)
+
+    names = speaker_mapping.resolve_speaker_names(
+        {},
+        {"part001:S01": "Host"},
+        segments=merged.segments,
+    )
+
+    assert names == {"S001001": "Host"}
+
+    output = nodes_module.T8MossSubtitleExport.execute(
+        merged,
+        "{}",
+        True,
+        "moss_transcript",
+        False,
+        cross_chunk_speaker_map_json='{"part001:S01":"Host"}',
+    )
+    _json_text, txt_text, srt_text, ass_text, files_text = output.result
+    assert "[Host]hello" in txt_text
+    assert "Host: hello" in srt_text
+    assert "Host: hello" in ass_text
+    assert files_text == "{}"
+
+
+def test_long_audio_merge_preserves_repeated_phrases_without_chunk_overlap():
+    chunks = [
+        long_audio.AudioChunk(1, "part001", 0, 160000, 0.0, 10.0),
+        long_audio.AudioChunk(2, "part002", 160000, 320000, 10.0, 20.0),
+    ]
+    first = _payload("", ({"start": 8.0, "end": 9.0, "speaker": "S01", "text": "yes"},))
+    second = _payload("", ({"start": 0.0, "end": 1.0, "speaker": "S02", "text": "yes"},))
+
+    merged = long_audio.merge_chunk_payloads(chunks, [first, second], total_duration=20.0)
+
+    assert [item["text"] for item in merged.segments] == ["yes", "yes"]
+
+
+def test_long_audio_merge_preserves_distinct_repetitions_inside_overlap_window():
+    chunks = [
+        long_audio.AudioChunk(1, "part001", 0, 160000, 0.0, 10.0),
+        long_audio.AudioChunk(2, "part002", 144000, 304000, 9.0, 19.0),
+    ]
+    first = _payload("", ({"start": 9.0, "end": 9.2, "speaker": "S01", "text": "yes"},))
+    second = _payload("", ({"start": 0.7, "end": 0.9, "speaker": "S02", "text": "yes"},))
+
+    merged = long_audio.merge_chunk_payloads(chunks, [first, second], total_duration=19.0)
+
+    assert [item["text"] for item in merged.segments] == ["yes", "yes"]
+
+
 def test_long_audio_checkpoint_resumes_after_interruption(monkeypatch, tmp_path: Path):
     samples = np.ones(5 * 16000, dtype=np.float32) * 0.1
     handle = types_module.ModelHandle(tmp_path / "model", "cpu", "float32", model_revision="fixed")
@@ -230,6 +316,129 @@ def test_long_audio_checkpoint_resumes_after_interruption(monkeypatch, tmp_path:
     assert len(merged.segments) == 3
 
 
+def test_long_audio_checkpoint_configuration_change_reprocesses_every_chunk(monkeypatch, tmp_path: Path):
+    samples = np.ones(2 * 16000, dtype=np.float32) * 0.1
+    model_dir = tmp_path / "model"
+    first_handle = types_module.ModelHandle(
+        model_dir,
+        "cpu",
+        "float32",
+        model_revision="fixed",
+        attention_implementation="sdpa",
+    )
+    changed_handle = types_module.ModelHandle(
+        model_dir,
+        "cpu",
+        "bfloat16",
+        model_revision="fixed",
+        attention_implementation="eager",
+    )
+    monkeypatch.setattr(long_audio, "_comfy_runtime_callbacks", lambda _total: (None, None))
+    monkeypatch.setattr(long_audio.MODEL_CACHE, "acquire", lambda _handle: SimpleNamespace())
+    monkeypatch.setattr(long_audio.MODEL_CACHE, "done", lambda *_args: None)
+
+    first_calls = []
+
+    def initial(_handle, chunk, _prompt, **kwargs):
+        first_calls.append(kwargs["silence_policy"])
+        duration = len(chunk) / 16000.0
+        return _payload(
+            "",
+            ({"start": 0.0, "end": duration, "speaker": "S01", "text": "old result"},),
+            duration=duration,
+        )
+
+    monkeypatch.setattr(long_audio, "run_transcription_samples", initial)
+    long_audio.transcribe_long_audio(
+        first_handle,
+        samples,
+        None,
+        target_seconds=1.0,
+        max_seconds=1.0,
+        overlap_seconds=0.0,
+        split_strategy="fixed",
+        silence_policy="warn",
+        preflight_backend="webrtc",
+        vad_aggressiveness=2,
+        checkpoint_dir=tmp_path,
+        checkpoint_id="configuration-change",
+    )
+    assert first_calls == ["warn", "warn"]
+
+    changed_calls = []
+
+    def changed(_handle, chunk, _prompt, **kwargs):
+        changed_calls.append(
+            (kwargs["silence_policy"], kwargs["preflight_backend"], kwargs["vad_aggressiveness"])
+        )
+        duration = len(chunk) / 16000.0
+        return _payload(
+            "",
+            ({"start": 0.0, "end": duration, "speaker": "S01", "text": "new result"},),
+            duration=duration,
+        )
+
+    monkeypatch.setattr(long_audio, "run_transcription_samples", changed)
+    merged, report = long_audio.transcribe_long_audio(
+        changed_handle,
+        samples,
+        None,
+        target_seconds=1.0,
+        max_seconds=1.0,
+        overlap_seconds=0.0,
+        split_strategy="fixed",
+        silence_policy="reject",
+        preflight_backend="energy",
+        vad_aggressiveness=3,
+        checkpoint_dir=tmp_path,
+        checkpoint_id="configuration-change",
+    )
+
+    assert changed_calls == [("reject", "energy", 3), ("reject", "energy", 3)]
+    assert report["checkpoint_status"] == "configuration_changed"
+    assert report["resumed_chunks"] == []
+    assert {item["text"] for item in merged.segments} == {"new result"}
+
+
+def test_long_audio_checkpoint_fingerprint_covers_every_inference_setting(tmp_path: Path):
+    samples = np.ones(16000, dtype=np.float32) * 0.1
+    chunks = [long_audio.AudioChunk(1, "part001", 0, 16000, 0.0, 1.0)]
+    budgets = [256]
+    handle = types_module.ModelHandle(
+        tmp_path / "model",
+        "cpu",
+        "float32",
+        model_revision="fixed",
+        attention_implementation="sdpa",
+    )
+    config = {
+        "split_strategy": "fixed",
+        "overlap_seconds": 0.0,
+        "silence_policy": "warn",
+        "preflight_backend": "webrtc",
+        "vad_aggressiveness": 2,
+        "retry_policy": "quality_failure",
+    }
+
+    def fingerprint(selected_handle=handle, **overrides):
+        return long_audio._job_fingerprint(
+            samples,
+            selected_handle,
+            None,
+            chunks,
+            budgets,
+            **{**config, **overrides},
+        )
+
+    baseline = fingerprint()
+    assert fingerprint(replace(handle, device="cuda:0")) != baseline
+    assert fingerprint(replace(handle, precision="bfloat16")) != baseline
+    assert fingerprint(replace(handle, attention_implementation="eager")) != baseline
+    assert fingerprint(silence_policy="reject") != baseline
+    assert fingerprint(preflight_backend="energy") != baseline
+    assert fingerprint(vad_aggressiveness=3) != baseline
+
+
 def test_invalid_format_is_retried_once_and_better_result_is_selected(monkeypatch, tmp_path: Path):
     invalid = validation_module.TranscriptValidation(
         False,
@@ -273,6 +482,39 @@ def test_invalid_format_is_retried_once_and_better_result_is_selected(monkeypatc
     assert payload.metadata["retry"]["selected"] is True
     assert payload.raw_text.endswith("hello[1.00]")
     assert progress[-1] == (32, 32)
+
+
+def test_success_without_retry_uses_a_single_pass_progress_total(monkeypatch, tmp_path: Path):
+    valid_segment = SimpleNamespace(start=0.0, end=1.0, speaker="S01", text="hello")
+    valid = validation_module.TranscriptValidation(True, (valid_segment,), (), False)
+
+    def generate(_entry, _samples, _prompt_text, **kwargs):
+        kwargs["progress_callback"](4, kwargs["progress_total"])
+        return {"text": "[0.00][S01]hello[1.00]", "prompt_len": 4, "generated_tokens": 4}, valid
+
+    monkeypatch.setattr(inference, "_generate_and_validate", generate)
+    entry = SimpleNamespace(
+        lock=threading.Lock(),
+        device=torch.device("cpu"),
+        dtype=torch.float32,
+        attention_report={"selected": "sdpa"},
+    )
+    progress = []
+    handle = types_module.ModelHandle(tmp_path, "cpu", "float32")
+
+    inference.run_transcription_samples(
+        handle,
+        np.ones(16000, dtype=np.float32) * 0.1,
+        None,
+        max_new_tokens=16,
+        silence_policy="ignore",
+        retry_policy="invalid_format",
+        progress_callback=lambda value, total: progress.append((value, total)),
+        cancellation_callback=lambda: False,
+        cache_entry=entry,
+    )
+
+    assert progress == [(4, 16), (16, 16)]
 
 
 def test_retry_ranking_prefers_clean_speaker_labels_and_no_generation_loop():

@@ -40,8 +40,8 @@ def _comfy_runtime_callbacks(total_tokens: int):
 
         api = ComfyAPISync()
 
-        def report_native_progress(value: int) -> None:
-            api.execution.set_progress(value, total_tokens)
+        def report_native_progress(value: int, current_total: int) -> None:
+            api.execution.set_progress(value, current_total)
 
         native_progress = report_native_progress
     except (ImportError, AttributeError, RuntimeError):
@@ -53,23 +53,24 @@ def _comfy_runtime_callbacks(total_tokens: int):
 
         progress = comfy.utils.ProgressBar(total_tokens)
 
-        def report_legacy_progress(value: int) -> None:
-            progress.update_absolute(value, total_tokens)
+        def report_legacy_progress(value: int, current_total: int) -> None:
+            progress.update_absolute(value, current_total)
 
         legacy_progress = report_legacy_progress
     except (ImportError, AttributeError):
         legacy_progress = None
 
-    def token_callback(generated_tokens: int) -> None:
-        value = min(int(generated_tokens), total_tokens)
+    def token_callback(generated_tokens: int, current_total: int | None = None) -> None:
+        resolved_total = max(1, int(current_total if current_total is not None else total_tokens))
+        value = min(int(generated_tokens), resolved_total)
         if native_progress is not None:
             try:
-                native_progress(value)
+                native_progress(value, resolved_total)
                 return
             except (RuntimeError, ValueError, AttributeError):
                 pass
         if legacy_progress is not None:
-            legacy_progress(value)
+            legacy_progress(value, resolved_total)
 
     def cancellation_callback() -> bool:
         comfy.model_management.throw_exception_if_processing_interrupted()
@@ -160,11 +161,11 @@ def run_transcription_samples(
         if silence_policy == "reject":
             raise ValueError(f"音频预检已拒绝推理：{message}")
     token_budget = int(max_new_tokens) if int(max_new_tokens) > 0 else estimate_max_new_tokens(duration)
-    progress_total = token_budget * (2 if retry_policy != "never" else 1)
+    progress_total = token_budget
     if progress_callback is None or cancellation_callback is None:
         comfy_progress, comfy_cancellation = _comfy_runtime_callbacks(progress_total)
         progress_callback = progress_callback or (
-            (lambda value, total: comfy_progress(value)) if comfy_progress is not None else None
+            (lambda value, total: comfy_progress(value, total)) if comfy_progress is not None else None
         )
         cancellation_callback = cancellation_callback or comfy_cancellation
     if cancellation_callback is not None:
@@ -192,6 +193,7 @@ def run_transcription_samples(
             retry_validation = None
             retry_selected = False
             if retry_reason is not None:
+                progress_total = token_budget * 2
                 retry_result, retry_validation = _generate_and_validate(
                     entry,
                     samples,

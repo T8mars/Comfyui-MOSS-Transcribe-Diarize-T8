@@ -14,10 +14,12 @@ class ModelHandle:
     model_revision: str = ""
     memory_policy: str = "keep"
     attention_implementation: str = "auto"
+    model_fingerprint: str = ""
 
     @property
-    def cache_key(self) -> tuple[str, str, str, str]:
-        return (str(self.model_dir.resolve()), self.device, self.precision, self.attention_implementation)
+    def cache_key(self) -> tuple[str, str, str, str, str]:
+        identity = self.model_fingerprint or self.model_revision
+        return (str(self.model_dir.resolve()), self.device, self.precision, identity, self.attention_implementation)
 
     @property
     def effective_memory_policy(self) -> str:
