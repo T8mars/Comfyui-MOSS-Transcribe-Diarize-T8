@@ -65,7 +65,9 @@ def test_release_build_is_reproducible_and_excludes_development_only_files(tmp_p
     assert "os.environ.get(" not in packaged_python
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["node_version"] == "0.3.6"
+    assert manifest["node_version"] == "0.3.7"
+    assert b"\r\n" not in manifest_path.read_bytes()
+    assert b"\r\n" not in sums.read_bytes()
     assert manifest["upstream_code_revision"] == EXPECTED_CODE_REVISION
     assert manifest["archive"]["name"] == archive.name
     assert manifest["archive"]["sha256"] == build_release.sha256(archive)
@@ -127,12 +129,12 @@ def test_tagged_release_requires_matching_clean_head(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(build_release, "source_commit", lambda: "head")
     monkeypatch.setattr(build_release, "tagged_commit", lambda tag: "other")
     with pytest.raises(RuntimeError, match="points to other"):
-        build_release.validate_release_source("v0.3.6")
+        build_release.validate_release_source("v0.3.7")
 
     monkeypatch.setattr(build_release, "tagged_commit", lambda tag: "head")
     monkeypatch.setattr(build_release, "source_is_dirty", lambda: True)
     with pytest.raises(RuntimeError, match="clean working tree"):
-        build_release.validate_release_source("v0.3.6")
+        build_release.validate_release_source("v0.3.7")
 
 
 def test_release_and_compatibility_workflows_keep_automatic_delivery_observable():
@@ -145,8 +147,8 @@ def test_release_and_compatibility_workflows_keep_automatic_delivery_observable(
     assert "needs: release" in release
     assert "name: Validate and build" in release
     assert "name: Attest and publish GitHub Release" in release
-    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in release
-    assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in release
+    assert "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f" in release
+    assert "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0" in release
     assert release.count("persist-credentials: false") == 3
     assert "python-version: \"3.12\"" in release
     assert "Comfy-Org/publish-node-action@" not in release

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.7 - 2026-08-30
+
+- 修复 Windows 会把外置 `release-manifest` 与 `SHA256SUMS` 写成 CRLF、导致它们与 Linux Release 字节不一致的问题；三个发布制品现在都使用显式 LF 字节写入。
+- Artifact 上传/下载 Action 升级到 Node.js 24 版本并固定完整 commit SHA，消除 v0.3.6 发布流水线中的 Node.js 20 弃用警告；运行时功能和模型 revision 不变。
+
 ## 0.3.6 - 2026-08-30
 
 - 修复短音频绕过尾部覆盖率、零时长字幕段通过校验、NaN/Inf 绕过时长检查，以及串联校验节点保留失效顶层诊断的问题。

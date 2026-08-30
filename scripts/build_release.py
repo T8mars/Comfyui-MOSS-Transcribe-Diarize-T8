@@ -183,7 +183,7 @@ def write_archive(path: Path, files: list[Path]) -> tuple[int, int]:
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_bytes((json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))
 
 
 def build_release(output: Path, *, expected_tag: str = "") -> list[Path]:
@@ -222,9 +222,8 @@ def build_release(output: Path, *, expected_tag: str = "") -> list[Path]:
             "upstream_code_revision": model_manifest["code_revision"],
         },
     )
-    sums.write_text(
-        f"{archive_digest}  {archive.name}\n{sha256(manifest)}  {manifest.name}\n",
-        encoding="utf-8",
+    sums.write_bytes(
+        f"{archive_digest}  {archive.name}\n{sha256(manifest)}  {manifest.name}\n".encode("utf-8")
     )
     return [archive, manifest, sums]
 

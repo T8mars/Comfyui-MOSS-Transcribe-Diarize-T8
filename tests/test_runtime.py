@@ -208,7 +208,7 @@ def test_ui_workflows_reference_current_node_package_version():
             for node in payload.get("nodes", [])
             if node.get("properties", {}).get("cnr_id") == "comfyui-moss-transcribe-diarize-t8"
         }
-        assert versions == {"0.3.6"}, f"{path.name} has stale node versions: {versions}"
+        assert versions == {"0.3.7"}, f"{path.name} has stale node versions: {versions}"
 
 
 def test_manifest_is_pinned_to_reviewed_revisions():
