@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.8 - 2026-08-30
+
+- 将 `actions/download-artifact` 升级并固定到默认使用 Node.js 24 的官方 v7 commit，消除 v0.3.7 中残留的 Node.js 20 弃用警告；运行时、模型和发布字节规范化逻辑不变。
+
 ## 0.3.7 - 2026-08-30
 
 - 修复 Windows 会把外置 `release-manifest` 与 `SHA256SUMS` 写成 CRLF、导致它们与 Linux Release 字节不一致的问题；三个发布制品现在都使用显式 LF 字节写入。
