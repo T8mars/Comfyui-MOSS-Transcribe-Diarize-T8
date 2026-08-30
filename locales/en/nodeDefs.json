@@ -131,7 +131,8 @@
       "min_end_coverage": { "name": "Minimum end coverage" },
       "max_unknown_speaker_ratio": { "name": "Maximum unknown-speaker ratio" },
       "reject_repetition": { "name": "Reject repetition loops" },
-      "reject_truncation": { "name": "Reject truncation risk" }
+      "reject_truncation": { "name": "Reject truncation risk" },
+      "fail_on_unusable": { "name": "Stop workflow when unusable" }
     },
     "outputs": {
       "0": { "name": "Evaluated MOSS transcript" },

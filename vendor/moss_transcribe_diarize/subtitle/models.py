@@ -1,3 +1,4 @@
+# Modified by the T8star-Aix integration after OpenMOSS cb765f2; see CHANGELOG.md.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

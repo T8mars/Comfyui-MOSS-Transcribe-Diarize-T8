@@ -1,3 +1,4 @@
+# Modified by the T8star-Aix integration after OpenMOSS cb765f2; see CHANGELOG.md.
 from .export import export_ass, export_json, export_srt, validate_ass_style, write_text
 from .layout import assign_overlap_lanes
 from .models import SubtitleSegment, SubtitleStyle

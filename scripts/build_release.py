@@ -23,6 +23,8 @@ ARCHIVE_STEM = "comfyui-MOSS-Transcribe-Diarize-T8"
 REGISTRY_ID = "comfyui-moss-transcribe-diarize-t8"
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 ALWAYS_IGNORED = (".git", ".compat", "dist", ".artifacts")
+TEXT_FILENAMES = {".comfyignore", ".gitattributes", ".gitignore", "DISCLAIMER", "LICENSE"}
+TEXT_SUFFIXES = {".cfg", ".ini", ".json", ".md", ".py", ".toml", ".txt", ".yaml", ".yml"}
 
 
 def sha256(path: Path) -> str:
@@ -90,7 +92,7 @@ def is_ignored(relative: str, patterns: tuple[str, ...]) -> bool:
 
 def release_files() -> list[Path]:
     result = subprocess.run(
-        ["git", "-C", str(PLUGIN_ROOT), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        ["git", "-C", str(PLUGIN_ROOT), "ls-files", "--cached", "-z"],
         check=True,
         capture_output=True,
     )
@@ -101,6 +103,8 @@ def release_files() -> list[Path]:
             continue
         relative = raw.replace("\\", "/")
         path = PLUGIN_ROOT / relative
+        if path.is_symlink():
+            raise RuntimeError(f"Release archives do not allow symbolic links: {relative}")
         if path.is_file() and not is_ignored(relative, patterns):
             files.append(path)
     return sorted(files, key=lambda item: item.relative_to(PLUGIN_ROOT).as_posix())
@@ -116,6 +120,47 @@ def source_commit() -> str:
     return result.stdout.strip()
 
 
+def source_is_dirty() -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(PLUGIN_ROOT), "status", "--porcelain=v1", "--untracked-files=all"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return bool(result.stdout.strip())
+
+
+def tagged_commit(tag: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(PLUGIN_ROOT), "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Release tag does not exist locally: {tag}") from exc
+    return result.stdout.strip()
+
+
+def validate_release_source(expected_tag: str = "") -> None:
+    if not expected_tag:
+        return
+    head = source_commit()
+    resolved_tag = tagged_commit(expected_tag)
+    if resolved_tag != head:
+        raise RuntimeError(f"Release tag {expected_tag} points to {resolved_tag}, but HEAD is {head}")
+    if source_is_dirty():
+        raise RuntimeError("Tagged release builds require a clean working tree")
+
+
+def release_bytes(path: Path) -> bytes:
+    data = path.read_bytes()
+    if path.name in TEXT_FILENAMES or path.suffix.lower() in TEXT_SUFFIXES:
+        return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return data
+
+
 def write_archive(path: Path, files: list[Path]) -> tuple[int, int]:
     unpacked_size = 0
     with zipfile.ZipFile(
@@ -127,7 +172,7 @@ def write_archive(path: Path, files: list[Path]) -> tuple[int, int]:
     ) as archive:
         for source in files:
             relative = source.relative_to(PLUGIN_ROOT).as_posix()
-            data = source.read_bytes()
+            data = release_bytes(source)
             unpacked_size += len(data)
             info = zipfile.ZipInfo(relative, date_time=FIXED_ZIP_TIME)
             info.create_system = 3
@@ -143,6 +188,7 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def build_release(output: Path, *, expected_tag: str = "") -> list[Path]:
     version = validate_versions(expected_tag)
+    validate_release_source(expected_tag)
     output.mkdir(parents=True, exist_ok=True)
     files = release_files()
     if not files:
@@ -171,6 +217,7 @@ def build_release(output: Path, *, expected_tag: str = "") -> list[Path]:
             "node_version": version,
             "schema_version": 1,
             "source_commit": source_commit(),
+            "source_dirty": source_is_dirty(),
             "source_repository": "T8mars/Comfyui-MOSS-Transcribe-Diarize-T8",
             "upstream_code_revision": model_manifest["code_revision"],
         },

@@ -161,7 +161,7 @@ def run_transcription_samples(
         if silence_policy == "reject":
             raise ValueError(f"音频预检已拒绝推理：{message}")
     token_budget = int(max_new_tokens) if int(max_new_tokens) > 0 else estimate_max_new_tokens(duration)
-    progress_total = token_budget
+    progress_total = token_budget * (2 if retry_policy != "never" else 1)
     if progress_callback is None or cancellation_callback is None:
         comfy_progress, comfy_cancellation = _comfy_runtime_callbacks(progress_total)
         progress_callback = progress_callback or (
@@ -193,7 +193,6 @@ def run_transcription_samples(
             retry_validation = None
             retry_selected = False
             if retry_reason is not None:
-                progress_total = token_budget * 2
                 retry_result, retry_validation = _generate_and_validate(
                     entry,
                     samples,
@@ -316,6 +315,7 @@ def _retry_reason(validation, retry_policy: str) -> str | None:
         "repeated_text",
         "possible_early_stop",
         "possible_silence_hallucination",
+        "token_limit_reached",
         "timestamp_out_of_range",
     }:
         return "quality_failure"

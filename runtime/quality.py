@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import math
 import re
 from typing import Any, Iterable
 
@@ -38,13 +39,20 @@ def evaluate_quality_components(
     reject_repetition: bool = True,
     reject_truncation: bool = True,
 ) -> dict[str, Any]:
+    min_end_coverage = _require_ratio(min_end_coverage, "min_end_coverage")
+    max_unknown_speaker_ratio = _require_ratio(max_unknown_speaker_ratio, "max_unknown_speaker_ratio")
+    if media_duration is not None and (not math.isfinite(media_duration) or media_duration < 0):
+        raise ValueError("media_duration must be a finite non-negative number.")
+    if speech_ratio is not None and not math.isfinite(speech_ratio):
+        raise ValueError("speech_ratio must be finite when provided.")
     items = list(segments)
     diagnostic_items = [dict(item) for item in diagnostics]
     codes = {str(item.get("code") or "") for item in diagnostic_items}
     error_count = sum(str(item.get("level") or "") == "error" for item in diagnostic_items)
     warning_count = sum(str(item.get("level") or "") == "warning" for item in diagnostic_items)
 
-    last_end = max((_segment_number(item, "end") for item in items), default=0.0)
+    timing = [(_segment_number(item, "start"), _segment_number(item, "end")) for item in items]
+    last_end = max((end for _start, end in timing), default=0.0)
     end_coverage = None
     if media_duration is not None and media_duration > 0:
         end_coverage = min(1.0, max(0.0, last_end / media_duration))
@@ -57,11 +65,11 @@ def evaluate_quality_components(
     repeated_ratio = repeated_max / max(len(items), 1)
 
     reasons: list[str] = []
-    if not items or error_count:
+    if not items or error_count or any(start < 0 or end <= start for start, end in timing):
         reasons.append("invalid_transcript")
     if "timestamp_out_of_range" in codes:
         reasons.append("timestamp_out_of_range")
-    if media_duration is not None and media_duration >= 30 and end_coverage is not None and end_coverage < min_end_coverage:
+    if media_duration is not None and end_coverage is not None and end_coverage < min_end_coverage:
         reasons.append("insufficient_end_coverage")
     if unknown_ratio > max_unknown_speaker_ratio:
         reasons.append("too_many_unknown_speakers")
@@ -96,7 +104,10 @@ def evaluate_quality_components(
 
 def _segment_number(item: Any, key: str) -> float:
     value = item.get(key, 0.0) if isinstance(item, dict) else getattr(item, key, 0.0)
-    return float(value or 0.0)
+    number = float(value or 0.0)
+    if not math.isfinite(number):
+        raise ValueError(f"segment {key} must be finite.")
+    return number
 
 
 def _segment_text(item: Any, key: str) -> str:
@@ -108,9 +119,19 @@ def _as_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(number):
+        raise ValueError("quality metadata values must be finite.")
+    return number
+
+
+def _require_ratio(value: Any, name: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+        raise ValueError(f"{name} must be a finite number between 0 and 1.")
+    return number
 
 
 __all__ = ["evaluate_quality", "evaluate_quality_components"]

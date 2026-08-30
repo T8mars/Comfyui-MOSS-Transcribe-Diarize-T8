@@ -81,7 +81,8 @@
     "inputs": {
       "transcript": { "name": "MOSS 转写对象" }, "min_end_coverage": { "name": "最低尾部覆盖率" },
       "max_unknown_speaker_ratio": { "name": "未知说话人比例上限" },
-      "reject_repetition": { "name": "拒绝重复循环" }, "reject_truncation": { "name": "拒绝疑似截断" }
+      "reject_repetition": { "name": "拒绝重复循环" }, "reject_truncation": { "name": "拒绝疑似截断" },
+      "fail_on_unusable": { "name": "不可用时终止工作流" }
     },
     "outputs": { "0": { "name": "已评估转写对象" }, "1": { "name": "结果可用" }, "2": { "name": "质量报告 JSON" } }
   },

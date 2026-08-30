@@ -58,6 +58,9 @@ class ModelCache:
     def __init__(self):
         self._entries: dict[CacheKey, CacheEntry] = {}
         self._load_locks: dict[LoadLockKey, LoadGate] = {}
+        self._loading: dict[CacheKey, int] = {}
+        self._release_epoch = 0
+        self._release_key_epochs: dict[CacheKey, int] = {}
         self._lock = threading.RLock()
 
     @staticmethod
@@ -96,6 +99,9 @@ class ModelCache:
             runtime_key = self._runtime_key(key)
             gate = self._load_locks.setdefault(runtime_key, LoadGate(threading.Lock()))
             gate.users += 1
+            self._loading[key] = self._loading.get(key, 0) + 1
+            release_epoch = self._release_epoch
+            release_key_epoch = self._release_key_epochs.get(key, 0)
 
         try:
             with gate.lock:
@@ -145,10 +151,19 @@ class ModelCache:
                     users=1,
                 )
                 with self._lock:
+                    entry.release_requested = bool(
+                        self._release_epoch != release_epoch
+                        or self._release_key_epochs.get(key, 0) != release_key_epoch
+                    )
                     self._entries[key] = entry
                 return entry
         finally:
             with self._lock:
+                loading = max(0, self._loading.get(key, 0) - 1)
+                if loading:
+                    self._loading[key] = loading
+                else:
+                    self._loading.pop(key, None)
                 gate.users = max(0, gate.users - 1)
                 if gate.users == 0 and self._load_locks.get(runtime_key) is gate:
                     self._load_locks.pop(runtime_key, None)
@@ -184,17 +199,22 @@ class ModelCache:
         _, _, key = self._resolved(handle)
         with self._lock:
             entry = self._entries.get(key)
-            if entry is None:
+            loading = key in self._loading
+            if entry is None and not loading:
                 return False
-            entry.release_requested = True
-            if entry.users == 0:
-                self._entries.pop(key, None)
-                self._dispose(entry)
+            self._release_key_epochs[key] = self._release_key_epochs.get(key, 0) + 1
+            if entry is not None:
+                entry.release_requested = True
+                if entry.users == 0:
+                    self._entries.pop(key, None)
+                    self._dispose(entry)
             return True
 
     def release_all(self) -> int:
         with self._lock:
-            count = len(self._entries)
+            keys = set(self._entries) | set(self._loading)
+            count = len(keys)
+            self._release_epoch += 1
             for key, entry in list(self._entries.items()):
                 entry.release_requested = True
                 if entry.users == 0:

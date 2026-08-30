@@ -5,10 +5,12 @@ import importlib
 import importlib.util
 import os
 import sys
+import threading
 import types
 from pathlib import Path
 
 import numpy as np
+from packaging.version import Version
 import pytest
 
 
@@ -24,6 +26,9 @@ PACKAGE = importlib.util.module_from_spec(SPEC)
 sys.modules[PACKAGE_NAME] = PACKAGE
 SPEC.loader.exec_module(PACKAGE)
 inference = importlib.import_module(f"{PACKAGE_NAME}.runtime.inference")
+audio_adapter = importlib.import_module(
+    f"{PACKAGE_NAME}.vendor.moss_transcribe_diarize.audio_adapter"
+)
 model_store = importlib.import_module(f"{PACKAGE_NAME}.services.model_store")
 build_prompt = inference.build_prompt
 estimate_max_new_tokens = inference.estimate_max_new_tokens
@@ -57,6 +62,26 @@ def test_silence_rejects_before_model_cache_acquisition(monkeypatch, tmp_path: P
     assert acquired == []
 
 
+def test_resampler_falls_back_when_torchaudio_runtime_is_broken(monkeypatch):
+    fake_torchaudio = types.ModuleType("torchaudio")
+    fake_functional = types.ModuleType("torchaudio.functional")
+    fake_functional.resample = lambda *_args: (_ for _ in ()).throw(RuntimeError("binary mismatch"))
+    fake_torchaudio.functional = fake_functional
+    fake_soxr = types.ModuleType("soxr")
+    fake_soxr.resample = lambda values, _source, _target: np.repeat(values, 2)
+    monkeypatch.setitem(sys.modules, "torchaudio", fake_torchaudio)
+    monkeypatch.setitem(sys.modules, "torchaudio.functional", fake_functional)
+    monkeypatch.setitem(sys.modules, "soxr", fake_soxr)
+
+    output = audio_adapter.resample_waveform(
+        importlib.import_module("torch").tensor([[0.0, 1.0]], dtype=importlib.import_module("torch").float32),
+        8000,
+        16000,
+    )
+
+    assert output.tolist() == [[0.0, 0.0, 1.0, 1.0]]
+
+
 def test_auto_token_budget_is_bounded_and_duration_sensitive():
     assert estimate_max_new_tokens(1) == 2048
     assert estimate_max_new_tokens(3600) > estimate_max_new_tokens(600)
@@ -85,6 +110,15 @@ def test_model_directory_discovery_and_validation(tmp_path: Path, monkeypatch):
     assert model_store.validate_model_dir(model_dir).mismatched == ("tokenizer.json",)
 
 
+def test_direct_model_directory_discovery_uses_directory_name(tmp_path: Path):
+    model_dir = tmp_path / "direct-model"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "model-00000-of-00001.safetensors").write_bytes(b"weights")
+
+    assert model_store.discover_models([model_dir]) == {"direct-model": model_dir.resolve()}
+
+
 def test_explicit_sha256_verification_never_reuses_a_stale_digest(tmp_path: Path, monkeypatch):
     model_dir = tmp_path / "model"
     model_dir.mkdir()
@@ -109,6 +143,28 @@ def test_explicit_sha256_verification_never_reuses_a_stale_digest(tmp_path: Path
     assert model_store.model_fingerprint(model_dir) != original_fingerprint
 
 
+def test_model_fingerprint_covers_unsampled_large_file_regions(tmp_path: Path, monkeypatch):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    path = model_dir / "weights.bin"
+    original = b"a" * (1024 * 1024)
+    path.write_bytes(original)
+    original_stat = path.stat()
+    monkeypatch.setattr(
+        model_store,
+        "load_manifest",
+        lambda: {"revision": "fixed", "files": {"weights.bin": _metadata(original)}},
+    )
+
+    before = model_store.model_fingerprint(model_dir)
+    with path.open("r+b") as stream:
+        stream.seek(256 * 1024)
+        stream.write(b"b" * 4096)
+    os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    assert model_store.model_fingerprint(model_dir) != before
+
+
 def test_requirements_never_replace_comfyui_torch_stack():
     requirements = (model_store.PLUGIN_ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
     active = [line.strip() for line in requirements.splitlines() if line.strip() and not line.startswith("#")]
@@ -124,7 +180,21 @@ def test_requirements_never_replace_comfyui_torch_stack():
     assert "transformers==5.15.1" in optional
     checker = (model_store.PLUGIN_ROOT / "scripts" / "check_transformers.py").read_text(encoding="utf-8")
     assert 'Version("5.5.0")' in checker
-    assert "published security advisories" in checker
+    assert "security minimum 5.5.0" in checker
+
+
+def test_runtime_rejects_transformers_below_security_minimum(monkeypatch):
+    compat = importlib.import_module(
+        f"{PACKAGE_NAME}.vendor.moss_transcribe_diarize.transformers_compat"
+    )
+    monkeypatch.setattr(compat, "transformers_version", lambda: Version("4.57.6"))
+
+    report = compat.compatibility_report()
+
+    assert report.supported is False
+    assert report.minimum == "5.5.0"
+    with pytest.raises(RuntimeError, match="too old"):
+        compat.require_compatible_transformers()
 
 
 def test_ui_workflows_reference_current_node_package_version():
@@ -138,7 +208,7 @@ def test_ui_workflows_reference_current_node_package_version():
             for node in payload.get("nodes", [])
             if node.get("properties", {}).get("cnr_id") == "comfyui-moss-transcribe-diarize-t8"
         }
-        assert versions == {"0.3.5"}, f"{path.name} has stale node versions: {versions}"
+        assert versions == {"0.3.6"}, f"{path.name} has stale node versions: {versions}"
 
 
 def test_manifest_is_pinned_to_reviewed_revisions():
@@ -295,6 +365,49 @@ def test_model_cache_discards_idle_load_gates_after_success_and_failure(tmp_path
     with pytest.raises(RuntimeError, match="load failed"):
         failing.acquire(handle)
     assert failing._load_locks == {}
+
+
+@pytest.mark.parametrize("action", ["release", "release_all"])
+def test_model_cache_release_reaches_models_still_loading(action, tmp_path: Path, monkeypatch):
+    model_cache = importlib.import_module(f"{PACKAGE_NAME}.runtime.model_cache")
+    compat = importlib.import_module(
+        f"{PACKAGE_NAME}.vendor.moss_transcribe_diarize.transformers_compat"
+    )
+    types_module = importlib.import_module(f"{PACKAGE_NAME}.runtime.types")
+    cache = model_cache.ModelCache()
+    handle = types_module.ModelHandle(tmp_path, "cpu", "float32", model_revision="fixed")
+    load_started = threading.Event()
+    finish_load = threading.Event()
+    acquired = []
+
+    class FakeModel:
+        def to(self, _device):
+            return self
+
+        def eval(self):
+            return self
+
+    def load(*_args, **_kwargs):
+        load_started.set()
+        assert finish_load.wait(2.0)
+        return FakeModel(), object(), {"selected": "sdpa"}
+
+    monkeypatch.setattr(compat, "load_local_model_processor_with_attention", load)
+
+    thread = threading.Thread(target=lambda: acquired.append(cache.acquire(handle)))
+    thread.start()
+    assert load_started.wait(2.0)
+    if action == "release":
+        assert cache.release(handle) is True
+    else:
+        assert cache.release_all() == 1
+    finish_load.set()
+    thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+    assert acquired[0].release_requested is True
+    cache.done(handle, acquired[0])
+    assert cache.report() == []
 
 
 def test_attention_policy_is_part_of_comfy_model_cache_identity(tmp_path: Path):

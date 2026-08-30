@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+*.7z binary
+*.bin binary
+*.flac binary
+*.mp3 binary
+*.npy binary
+*.npz binary
+*.ogg binary
+*.png binary
+*.safetensors binary
+*.wav binary
+*.zip binary

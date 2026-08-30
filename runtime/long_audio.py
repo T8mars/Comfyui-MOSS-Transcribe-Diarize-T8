@@ -553,19 +553,45 @@ def _acquire_checkpoint_lock(path: Path | None, cancellation_callback) -> FileLo
 def _load_checkpoint(path: Path | None, fingerprint: str) -> tuple[dict[int, TranscriptPayload], str]:
     if path is None or not path.exists():
         return {}, "new"
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schema") != CHECKPOINT_SCHEMA:
-        raise ValueError(f"Unsupported checkpoint schema: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}, "invalid"
+    if not isinstance(data, dict) or data.get("schema") != CHECKPOINT_SCHEMA:
+        return {}, "invalid"
     if data.get("fingerprint") != fingerprint:
         return {}, "configuration_changed"
+    raw_completed = data.get("completed") or {}
+    if not isinstance(raw_completed, dict):
+        return {}, "invalid"
     completed: dict[int, TranscriptPayload] = {}
-    for key, item in (data.get("completed") or {}).items():
-        completed[int(key)] = TranscriptPayload(
-            raw_text=str(item.get("raw_text") or ""),
-            segments=tuple(item.get("segments") or ()),
-            diagnostics=tuple(item.get("diagnostics") or ()),
-            metadata=dict(item.get("metadata") or {}),
-        )
+    try:
+        for key, item in raw_completed.items():
+            index = int(key)
+            if index <= 0 or not isinstance(item, dict):
+                return {}, "invalid"
+            segments = item.get("segments") or ()
+            diagnostics = item.get("diagnostics") or ()
+            metadata = item.get("metadata") or {}
+            if not isinstance(segments, (list, tuple)) or not all(isinstance(value, dict) for value in segments):
+                return {}, "invalid"
+            if not isinstance(diagnostics, (list, tuple)) or not all(
+                isinstance(value, dict) for value in diagnostics
+            ):
+                return {}, "invalid"
+            if not isinstance(metadata, dict):
+                return {}, "invalid"
+            completed[index] = TranscriptPayload(
+                raw_text=str(item.get("raw_text") or ""),
+                segments=tuple(segments),
+                diagnostics=tuple(diagnostics),
+                metadata=dict(metadata),
+            )
+    except (TypeError, ValueError):
+        return {}, "invalid"
+    indices = sorted(completed)
+    if indices and indices != list(range(1, indices[-1] + 1)):
+        return {}, "invalid"
     return completed, "resumed" if completed else "empty"
 
 

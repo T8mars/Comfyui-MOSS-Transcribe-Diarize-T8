@@ -63,7 +63,7 @@ def test_registers_nine_pure_v3_nodes():
     assert "silence_policy" in input_names[2]
     assert {"preflight_backend", "vad_aggressiveness", "retry_policy"} <= input_names[2]
     assert {"split_strategy", "checkpoint_mode", "checkpoint_id"} <= input_names[3]
-    assert {"min_end_coverage", "max_unknown_speaker_ratio"} <= input_names[5]
+    assert {"min_end_coverage", "max_unknown_speaker_ratio", "fail_on_unusable"} <= input_names[5]
     assert {"font_name", "video_width", "video_height"} <= input_names[6]
     assert {"chunk_id", "cross_chunk_speaker_map_json", "style"} <= input_names[7]
 
@@ -125,3 +125,13 @@ def test_api_examples_have_queue_eligible_output_nodes():
             if value["class_type"] in node_types and node_types[value["class_type"]].OUTPUT_NODE is True
         ]
         assert outputs, f"{path.name} has no queue-eligible output node"
+
+
+def test_long_audio_examples_stop_before_writing_unusable_results():
+    root = Path(__file__).resolve().parents[1] / "example_workflows"
+    api = json.loads((root / "api" / "02_long_audio_diagnostics.json").read_text(encoding="utf-8"))
+    ui = json.loads((root / "ui" / "02_long_audio_diagnostics.json").read_text(encoding="utf-8"))
+    quality = next(node for node in ui["nodes"] if node["type"] == "T8_MOSS_QualityGate")
+
+    assert api["5"]["inputs"]["fail_on_unusable"] is True
+    assert quality["widgets_values"][-1] is True

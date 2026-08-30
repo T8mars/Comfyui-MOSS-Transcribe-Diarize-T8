@@ -1,3 +1,4 @@
+# Modified by the T8star-Aix integration after OpenMOSS cb765f2; see CHANGELOG.md.
 """MossTranscribeDiarizeForConditionalGeneration: Whisper-Medium + VQAdaptor + Qwen3-0.6B.
 
 Architecture:

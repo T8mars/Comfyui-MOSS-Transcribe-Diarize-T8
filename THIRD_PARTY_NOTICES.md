@@ -1,25 +1,15 @@
 # Third-party notices
 
-This integration redistributes or can download components maintained by independent projects.
-The final release must include the exact license texts produced by the release SBOM and license audit.
+This ComfyUI custom-node source package redistributes integration code derived from
+[OpenMOSS/MOSS-Transcribe-Diarize](https://github.com/OpenMOSS/MOSS-Transcribe-Diarize),
+reviewed at commit `cb765f2b0fe6f7a298aa2002e2281ae693d1f3c3`, under the Apache License 2.0.
+The license text is included in `LICENSE`. Files changed by this integration carry an explicit
+modification notice; the integration changes are summarized in `CHANGELOG.md`.
 
-- OpenMOSS MOSS-Transcribe-Diarize code and model: Apache License 2.0.
-- Electron and Chromium: their respective open-source licenses; packaged Chromium notices must be retained.
-- Python: Python Software Foundation License.
-- PyTorch and Torchaudio: BSD-style licenses and bundled third-party notices.
-- Transformers, Hugging Face Hub, Tokenizers, Safetensors: their respective repository licenses.
-- NumPy, SciPy, Librosa, Numba, PyAV, SoundFile, SoXR, FastAPI, Uvicorn and transitive dependencies:
-  their respective licenses recorded in the release SBOM.
-- FFmpeg/ffprobe: pinned BtbN Windows x64 `lgpl-shared` build from 2026-08-19, FFmpeg commit
-  `e1e325235ee2f9f81b39d47ac2f9fe529257589e`; binary and source archive hashes are recorded in
-  `manifests/ffmpeg_windows_x64.json`. The package keeps `LICENSE.txt`, matching FFmpeg source and
-  BtbN build scripts under `resources/ffmpeg/source`. Video burn-in uses FFmpeg's native MPEG-4 and
-  AAC encoders instead of GPL-only libx264.
-- NVIDIA CUDA and cuDNN runtime libraries bundled by the pinned PyTorch wheel: redistribution is
-  subject to the [NVIDIA CUDA Toolkit EULA](https://docs.nvidia.com/cuda/eula/) and
-  [cuDNN software license](https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html).
-  The exact DLL names, sizes, and SHA-256 values are generated as
-  `resources/packaging/metadata/nvidia-runtime-inventory.json`. Public distribution remains gated on
-  an organization-level review of that inventory and the applicable NVIDIA terms.
+The release ZIP does **not** bundle model weights, Python, PyTorch, CUDA/cuDNN, FFmpeg, Electron,
+Chromium, or third-party Python wheels. The model downloader retrieves the pinned OpenMOSS model
+snapshot separately from Hugging Face. Python dependencies listed in `requirements.txt` and the
+optional `requirements-transformers-v5.txt` are installed separately by the user's environment and
+remain subject to their own upstream licenses and notices.
 
 No third-party project endorses the T8star-Aix integration unless explicitly stated by that project.

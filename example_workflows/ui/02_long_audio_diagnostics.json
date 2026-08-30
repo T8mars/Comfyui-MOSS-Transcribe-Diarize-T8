@@ -24,7 +24,7 @@
         {"name": "model", "type": "T8_MOSS_TRANSCRIBE_MODEL", "links": [1, 5]},
         {"name": "model_info", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_ModelLoader", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.5"},
+      "properties": {"Node name for S&R": "T8_MOSS_ModelLoader", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.6"},
       "widgets_values": ["MOSS-Transcribe-Diarize", "auto", "auto", false, false, "release_under_pressure", "auto", ""]
     },
     {
@@ -59,7 +59,7 @@
         {"name": "prompt", "type": "T8_MOSS_PROMPT", "links": [3]},
         {"name": "prompt_text", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_PromptHotwords", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.5"},
+      "properties": {"Node name for S&R": "T8_MOSS_PromptHotwords", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.6"},
       "widgets_values": ["请将长音频转写为文本，每段包含起止时间戳与说话人编号。", "zh_meeting", "OpenMOSS, ComfyUI, T8star-Aix", "中文", true]
     },
     {
@@ -94,7 +94,7 @@
         {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "links": [4]},
         {"name": "chunk_report", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_SmartLongAudio", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.5"},
+      "properties": {"Node name for S&R": "T8_MOSS_SmartLongAudio", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.6"},
       "widgets_values": [0, 8.0, 10.0, 1.0, "vad", "warn", 2, "quality_failure", "read_write", ""]
     },
     {
@@ -117,7 +117,7 @@
         {"name": "report_json", "type": "STRING", "links": []},
         {"name": "segments_json", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_TranscriptValidate", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.5"},
+      "properties": {"Node name for S&R": "T8_MOSS_TranscriptValidate", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.6"},
       "widgets_values": ["", 0, 0, 0]
     },
     {
@@ -144,7 +144,7 @@
         {"name": "ass", "type": "STRING", "links": []},
         {"name": "files", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_SubtitleExport", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.5"},
+      "properties": {"Node name for S&R": "T8_MOSS_SubtitleExport", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.6"},
       "widgets_values": ["{}", true, "moss_long_audio_checked", true, "long-part1", "{}"]
     },
     {
@@ -160,7 +160,7 @@
         {"name": "model", "type": "T8_MOSS_TRANSCRIBE_MODEL", "link": 5, "shape": 7}
       ],
       "outputs": [{"name": "environment_report", "type": "STRING", "links": []}],
-      "properties": {"Node name for S&R": "T8_MOSS_EnvironmentRelease", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.5"},
+      "properties": {"Node name for S&R": "T8_MOSS_EnvironmentRelease", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.6"},
       "widgets_values": ["report_only"]
     },
     {
@@ -176,15 +176,16 @@
         {"name": "min_end_coverage", "type": "FLOAT", "widget": {"name": "min_end_coverage"}, "link": null},
         {"name": "max_unknown_speaker_ratio", "type": "FLOAT", "widget": {"name": "max_unknown_speaker_ratio"}, "link": null},
         {"name": "reject_repetition", "type": "BOOLEAN", "widget": {"name": "reject_repetition"}, "link": null},
-        {"name": "reject_truncation", "type": "BOOLEAN", "widget": {"name": "reject_truncation"}, "link": null}
+        {"name": "reject_truncation", "type": "BOOLEAN", "widget": {"name": "reject_truncation"}, "link": null},
+        {"name": "fail_on_unusable", "type": "BOOLEAN", "widget": {"name": "fail_on_unusable"}, "link": null}
       ],
       "outputs": [
         {"name": "transcript", "type": "T8_MOSS_TRANSCRIPT", "links": [7]},
         {"name": "is_usable", "type": "BOOLEAN", "links": []},
         {"name": "quality_report", "type": "STRING", "links": []}
       ],
-      "properties": {"Node name for S&R": "T8_MOSS_QualityGate", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.5"},
-      "widgets_values": [0.75, 0.5, true, true]
+      "properties": {"Node name for S&R": "T8_MOSS_QualityGate", "cnr_id": "comfyui-moss-transcribe-diarize-t8", "ver": "0.3.6"},
+      "widgets_values": [0.75, 0.5, true, true, true]
     }
   ],
   "links": [

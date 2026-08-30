@@ -80,7 +80,7 @@ def discover_models(roots: Iterable[Path] | None = None) -> dict[str, Path]:
             else:
                 directories[:] = [name for name in directories if name not in {".git", "__pycache__", ".cache"}]
             if "config.json" in files and _looks_like_model(model_dir):
-                candidates.append((relative.as_posix(), model_dir))
+                candidates.append((root.name if relative == Path(".") else relative.as_posix(), model_dir))
 
     result: dict[str, Path] = {}
     seen: set[Path] = set()
@@ -122,22 +122,6 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _content_signature(path: Path, size: int, *, sample_size: int = 64 * 1024) -> str:
-    digest = hashlib.sha256()
-    offsets = {
-        0,
-        max(0, size // 2 - sample_size // 2),
-        max(0, size - sample_size),
-    }
-    with path.open("rb") as stream:
-        for offset in sorted(offsets):
-            stream.seek(offset)
-            chunk = stream.read(sample_size)
-            digest.update(offset.to_bytes(8, "little", signed=False))
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def validate_model_dir(model_dir: Path | str, *, verify_hashes: bool = False) -> ValidationReport:
     model_dir = Path(model_dir).expanduser().resolve()
     missing: list[str] = []
@@ -164,7 +148,7 @@ def model_fingerprint(model_dir: Path | str) -> str:
             parts.append(
                 f"{relative}:{stat.st_size}:{stat.st_mtime_ns}:"
                 f"{getattr(stat, 'st_ctime_ns', 0)}:{getattr(stat, 'st_ino', 0)}:"
-                f"{_content_signature(path, stat.st_size)}"
+                f"{_sha256(path)}"
             )
         except FileNotFoundError:
             parts.append(f"{relative}:missing")

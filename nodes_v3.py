@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import platform
 import re
 import time
@@ -15,7 +16,7 @@ from comfy_api.latest import ComfyExtension, io
 
 from .runtime.inference import build_prompt, run_transcription
 from .runtime.long_audio import transcribe_long_audio
-from .runtime.model_cache import MODEL_CACHE, _cuda_bf16_supported
+from .runtime.model_cache import MODEL_CACHE, _cuda_bf16_supported, resolve_dtype
 from .runtime.quality import evaluate_quality
 from .runtime.types import ModelHandle, PromptConfig, TranscriptPayload
 from .services.model_store import (
@@ -51,6 +52,19 @@ ModelType = io.Custom("T8_MOSS_TRANSCRIBE_MODEL")
 PromptType = io.Custom("T8_MOSS_PROMPT")
 TranscriptType = io.Custom("T8_MOSS_TRANSCRIPT")
 SubtitleStyleType = io.Custom("T8_MOSS_SUBTITLE_STYLE")
+REVALIDATED_DIAGNOSTIC_CODES = {
+    "empty_output",
+    "invalid_format",
+    "incomplete_segment",
+    "speaker_tag_missing",
+    "invalid_timestamp",
+    "zero_duration",
+    "timestamp_order",
+    "timestamp_out_of_range",
+    "possible_early_stop",
+    "repeated_text",
+    "token_limit_reached",
+}
 
 
 def _device_options() -> list[str]:
@@ -93,7 +107,12 @@ def _merge_validation_diagnostics(
 ) -> tuple[dict, ...]:
     merged: list[dict] = []
     seen: set[str] = set()
-    for item in (*original, *generated):
+    retained_original = (
+        item
+        for item in original
+        if item.get("chunk_id") is not None or str(item.get("code") or "") not in REVALIDATED_DIAGNOSTIC_CODES
+    )
+    for item in (*retained_original, *generated):
         diagnostic = dict(item)
         signature = json.dumps(diagnostic, ensure_ascii=False, sort_keys=True, default=str)
         if signature in seen:
@@ -151,9 +170,12 @@ def _optional_float(value) -> float:
     if value in (None, ""):
         return 0.0
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return 0.0
+    if not math.isfinite(number):
+        raise ValueError("Numeric inputs must be finite.")
+    return number
 
 
 def _optional_int(value) -> int:
@@ -197,7 +219,7 @@ class T8MossModelLoader(io.ComfyNode):
                     display_name="完整 SHA-256 校验",
                     default=False,
                     advanced=True,
-                    tooltip="会读取约 1.8GB 权重；平时文件大小校验即可。",
+                    tooltip="模型身份始终读取全文件 SHA-256；开启后还会与固定 manifest 的预期摘要逐项比对。",
                 ),
                 io.Combo.Input(
                     "memory_policy",
@@ -288,6 +310,7 @@ class T8MossModelLoader(io.ComfyNode):
         report = validate_model_dir(model_dir, verify_hashes=verify_hashes)
         report.require_valid()
         resolved_device = _resolve_device(device)
+        effective_dtype = resolve_dtype(precision, torch.device(resolved_device))
         manifest = load_manifest()
         handle = ModelHandle(
             model_dir=model_dir,
@@ -306,7 +329,8 @@ class T8MossModelLoader(io.ComfyNode):
             if total_gb < 12:
                 warning = f" | 警告：{total_gb:.1f}GB 低于正式支持的 12GB 基线，仅建议短音频"
         info = (
-            f"MOSS Transcribe Diarize | {model_dir} | device={resolved_device} | precision={precision} | "
+            f"MOSS Transcribe Diarize | {model_dir} | device={resolved_device} | "
+            f"precision={precision} -> dtype={effective_dtype} | "
             f"memory={handle.effective_memory_policy} | "
             f"attention={handle.attention_implementation} | "
             f"{'SHA-256 已校验' if verify_hashes else '文件大小已校验'} | revision={manifest['revision'][:12]}{warning}"
@@ -678,7 +702,6 @@ class T8MossTranscriptValidate(io.ComfyNode):
         )
         possibly_truncated = bool(
             result.possibly_truncated
-            or (transcript and transcript.metadata.get("possibly_truncated"))
             or any(item.get("code") == "token_limit_reached" for item in diagnostics)
         )
         validation_passed = bool(
@@ -749,6 +772,13 @@ class T8MossQualityGate(io.ComfyNode):
                 ),
                 io.Boolean.Input("reject_repetition", display_name="拒绝重复循环", default=True),
                 io.Boolean.Input("reject_truncation", display_name="拒绝疑似截断", default=True),
+                io.Boolean.Input(
+                    "fail_on_unusable",
+                    display_name="不可用时终止工作流",
+                    default=False,
+                    advanced=True,
+                    tooltip="启用后质量检查失败会抛出错误，阻止后续字幕写盘节点执行。",
+                ),
             ],
             outputs=[
                 TranscriptType.Output("transcript", display_name="已评估 MOSS_TRANSCRIPT"),
@@ -765,6 +795,7 @@ class T8MossQualityGate(io.ComfyNode):
         max_unknown_speaker_ratio: float,
         reject_repetition: bool,
         reject_truncation: bool,
+        fail_on_unusable: bool = False,
     ) -> io.NodeOutput:
         report = evaluate_quality(
             transcript,
@@ -779,6 +810,9 @@ class T8MossQualityGate(io.ComfyNode):
             diagnostics=transcript.diagnostics,
             metadata={**transcript.metadata, "quality_gate": report},
         )
+        if fail_on_unusable and not report["usable"]:
+            reasons = ", ".join(str(item) for item in report["reasons"])
+            raise ValueError(f"MOSS 转写质量门拒绝结果：{reasons}")
         return io.NodeOutput(payload, bool(report["usable"]), json.dumps(report, ensure_ascii=False, indent=2))
 
 

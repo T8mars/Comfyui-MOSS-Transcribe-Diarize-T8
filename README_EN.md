@@ -16,11 +16,11 @@ A MOSS Transcribe Diarize ComfyUI V3 custom node pack maintained by T8star-Aix. 
    Alternatively, download the GitHub Release ZIP and extract it to a directory with the same name.
 
 2. Run `pip install -r requirements.txt` in the ComfyUI Python environment. The dependency list will not install or replace `torch`, `torchaudio`, `torchvision`, or `transformers`. For Windows Portable, use `..\..\python_embeded\python.exe -m pip install -r requirements.txt` to avoid installing packages into the system Python environment by mistake.
-3. Run `python scripts/check_transformers.py`; for Windows Portable, use `..\..\python_embeded\python.exe scripts/check_transformers.py`. Transformers 5.5.0 through 5.x are kept unchanged. Versions 4.52.1 through 5.4 remain runtime-compatible with this node but are affected by published security advisories; after checking compatibility with other nodes, follow the prompt to upgrade to 5.15.1 with `requirements-transformers-v5.txt`.
+3. Run `python scripts/check_transformers.py`; for Windows Portable, use `..\..\python_embeded\python.exe scripts/check_transformers.py`. This node enforces Transformers 5.5.0 as its security minimum; older versions have published advisories and are rejected by the loader. After checking compatibility with other nodes, use `requirements-transformers-v5.txt` to repair the environment to 5.15.1.
 4. From the node directory, run `python scripts/download_models.py --comfyui-root ..\..`; for Windows Portable, use `..\..\python_embeded\python.exe scripts/download_models.py --comfyui-root ..\..`. You can also specify an absolute path with `--target`, or manually place the pinned model in `ComfyUI/models/moss_transcribe_diarize/MOSS-Transcribe-Diarize`. The script prints the final destination before starting the download. If it cannot identify the ComfyUI root, it exits with an error instead of silently placing model weights under `custom_nodes`.
 5. Restart ComfyUI and load a visual workflow from `example_workflows/ui`. API examples are available in `example_workflows/api`. The basic example covers hotwords, strict retry, and subtitle styling; the long-audio example covers VAD splitting, resumable checkpoints, quality gating, and environment diagnostics.
 
-The model is pinned to Hugging Face revision `e8681d68e7042738ffca8ac8212bc8fcb1131ab8`, while the audited OpenMOSS code baseline is pinned to revision `cb765f2b0fe6f7a298aa2002e2281ae693d1f3c3`. That upstream commit fixes a Transformers path that could silently select eager Attention and cause quadratic memory growth on long audio. This pack's `auto` mode now explicitly tries FlashAttention-2, SDPA, and eager in that order and records every skipped, failed, and selected backend. An explicitly requested backend still fails clearly instead of silently changing to another implementation. The loader validates file sizes by default and optionally performs full SHA-256 verification. The download script writes `.t8-download-report.json` to the model directory for local diagnostics only and sends no remote telemetry.
+The model is pinned to Hugging Face revision `e8681d68e7042738ffca8ac8212bc8fcb1131ab8`, while the audited OpenMOSS code baseline is pinned to revision `cb765f2b0fe6f7a298aa2002e2281ae693d1f3c3`. That upstream commit fixes a Transformers path that could silently select eager Attention and cause quadratic memory growth on long audio. This pack's `auto` mode explicitly tries FlashAttention-2, SDPA, and eager in that order and records every skipped, failed, and selected backend. An explicitly requested backend still fails clearly instead of silently changing to another implementation. The loader uses full-file SHA-256 values for model cache identity; enabling full verification also compares each file with the pinned manifest digest. The download script writes `.t8-download-report.json` to the model directory for local diagnostics only and sends no remote telemetry.
 
 ## Nine V3 Nodes
 
@@ -38,7 +38,7 @@ Cross-chunk mapping keys use the actual chunk ID and local speaker ID, for examp
 
 ## Compatibility and Limitations
 
-- Runtime compatibility covers Transformers `>=4.52.1,<6` and has been tested with 4.52.1, 4.57.6, 5.6.0, and 5.15.1. Because of published security advisories, `>=5.5.0,<6` is recommended and the security-repair file pins 5.15.1.
+- Runtime support requires Transformers `>=5.5.0,<6` and has been tested with 5.6.0 and 5.15.1. The security-repair file pins 5.15.1.
 - The supported production target is Windows 10/11 x64 with an NVIDIA GPU and at least 12 GB of VRAM. GPUs with 8–10 GB are supported only as a short-audio compatibility tier. CPU FP32 is a functional fallback with no performance guarantee.
 - Timestamps are generated at the sentence/segment level, not per word. Smart Long Audio namespaces speaker IDs by chunk; matching the same person across chunks still requires explicit manual mapping in the export node.
 - Silence, music, noise, and complex long-form audio may still cause hallucinations, early termination, or repetition. VAD, strict retry, and the quality gate expose and block risk; they are not a substitute for human review or a guarantee of accuracy.
@@ -49,7 +49,7 @@ This project is not an official OpenMOSS/MOSI distribution. See `LICENSE`, `DISC
 ## Verified Environment and Normal-Path Tests
 
 - Windows 11 x64, Python 3.12.13, PyTorch 2.8.0+cu128, and Transformers 5.15.1.
-- ComfyUI revision `5ab2f7a2d676c1fb7b410c22e82e2ed8f217b56c`; all nine V3 nodes registered independently, with 65 automated tests covering the new features and compatibility paths.
+- ComfyUI revision `5ab2f7a2d676c1fb7b410c22e82e2ed8f217b56c`; all nine V3 nodes registered independently, with 91 automated test cases covering functionality, security, and compatibility paths.
 - RTX 5090 Laptop 24 GB, BF16, with the locally pinned model revision.
 
 | Input length | Runtime | Peak VRAM | Generated tokens | Result |

@@ -150,6 +150,53 @@ def test_quality_gate_detects_coverage_unknown_speakers_and_repetition():
     } <= set(report["reasons"])
 
 
+def test_quality_gate_enforces_end_coverage_for_short_audio():
+    payload = _payload(
+        "[0.00][S01]short[1.00]",
+        ({"start": 0.0, "end": 1.0, "speaker": "S01", "text": "short"},),
+        duration=29.9,
+    )
+
+    report = quality.evaluate_quality(payload, min_end_coverage=0.75)
+
+    assert report["usable"] is False
+    assert "insufficient_end_coverage" in report["reasons"]
+
+
+def test_zero_duration_segment_is_invalid_and_unusable():
+    result = validation_module.validate_transcript("[10][S01]hello[10]", media_duration=10.0)
+    payload = types_module.TranscriptPayload(
+        raw_text="[10][S01]hello[10]",
+        segments=tuple(
+            {"start": item.start, "end": item.end, "speaker": item.speaker, "text": item.text}
+            for item in result.segments
+        ),
+        diagnostics=tuple(
+            {"level": item.level, "code": item.code, "message": item.message}
+            for item in result.diagnostics
+        ),
+        metadata={"audio_duration_seconds": 10.0},
+    )
+
+    assert result.valid is False
+    assert "zero_duration" in {item.code for item in result.diagnostics}
+    assert quality.evaluate_quality(payload)["usable"] is False
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_media_duration_is_rejected(value):
+    with pytest.raises(ValueError, match="finite"):
+        validation_module.validate_transcript("[0][S01]hello[1]", media_duration=value)
+
+    payload = _payload(
+        "[0][S01]hello[1]",
+        ({"start": 0.0, "end": 1.0, "speaker": "S01", "text": "hello"},),
+        duration=value,
+    )
+    with pytest.raises(ValueError, match="finite"):
+        quality.evaluate_quality(payload)
+
+
 def test_out_of_range_timestamps_are_rejected_and_never_outrank_a_safer_result():
     first = validation_module.validate_transcript(
         "[0.00]accurate words[8.00]",
@@ -187,7 +234,7 @@ def test_partial_transcript_with_incomplete_tail_is_invalid_and_retried():
 
     assert [item.text for item in result.segments] == ["complete"]
     assert result.valid is False
-    assert {item.code for item in result.diagnostics} == {"incomplete_segment"}
+    assert {item.code for item in result.diagnostics} == {"incomplete_segment", "possible_early_stop"}
     assert inference._retry_reason(result, "invalid_format") == "invalid_format"
 
 
@@ -600,6 +647,36 @@ def test_long_audio_checkpoint_fingerprint_covers_every_inference_setting(tmp_pa
     assert fingerprint() != baseline
 
 
+@pytest.mark.parametrize(
+    "checkpoint",
+    [
+        "{broken-json",
+        json.dumps(
+            {
+                "schema": long_audio.CHECKPOINT_SCHEMA,
+                "fingerprint": "fixed",
+                "completed": {
+                    "2": {
+                        "raw_text": "[0][S01]gap[1]",
+                        "segments": [],
+                        "diagnostics": [],
+                        "metadata": {},
+                    }
+                },
+            }
+        ),
+    ],
+)
+def test_invalid_or_noncontiguous_checkpoint_is_safely_reprocessed(tmp_path: Path, checkpoint: str):
+    path = tmp_path / "checkpoint.json"
+    path.write_text(checkpoint, encoding="utf-8")
+
+    completed, status = long_audio._load_checkpoint(path, "fixed")
+
+    assert completed == {}
+    assert status == "invalid"
+
+
 def test_checkpoint_names_are_bounded_and_atomic_concurrent_writes_do_not_collide(tmp_path: Path):
     fingerprint = "f" * 64
     path = long_audio._checkpoint_path(tmp_path, "x" * 300, fingerprint, "read_write")
@@ -683,8 +760,12 @@ def test_invalid_format_is_retried_once_and_better_result_is_selected(monkeypatc
     ]
     prompts = []
 
-    def generate(_entry, _samples, prompt_text, **_kwargs):
+    def generate(_entry, _samples, prompt_text, **kwargs):
         prompts.append(prompt_text)
+        kwargs["progress_callback"](
+            kwargs["progress_offset"] + kwargs["token_budget"],
+            kwargs["progress_total"],
+        )
         return results.pop(0)
 
     monkeypatch.setattr(inference, "_generate_and_validate", generate)
@@ -711,9 +792,11 @@ def test_invalid_format_is_retried_once_and_better_result_is_selected(monkeypatc
     assert payload.metadata["retry"]["selected"] is True
     assert payload.raw_text.endswith("hello[1.00]")
     assert progress[-1] == (32, 32)
+    assert progress == sorted(progress)
+    assert progress[0][0] < progress[0][1]
 
 
-def test_success_without_retry_uses_a_single_pass_progress_total(monkeypatch, tmp_path: Path):
+def test_success_without_retry_reserves_retry_progress_capacity(monkeypatch, tmp_path: Path):
     valid_segment = SimpleNamespace(start=0.0, end=1.0, speaker="S01", text="hello")
     valid = validation_module.TranscriptValidation(True, (valid_segment,), (), False)
 
@@ -743,7 +826,18 @@ def test_success_without_retry_uses_a_single_pass_progress_total(monkeypatch, tm
         cache_entry=entry,
     )
 
-    assert progress == [(4, 16), (16, 16)]
+    assert progress == [(4, 32), (32, 32)]
+
+
+def test_token_limit_quality_failure_triggers_retry():
+    validation = validation_module.validate_transcript(
+        "[0.00][S01]partial[10.00]",
+        media_duration=10.0,
+        generated_tokens=128,
+        max_new_tokens=128,
+    )
+
+    assert inference._retry_reason(validation, "quality_failure") == "quality_failure"
 
 
 def test_long_audio_retry_progress_does_not_finish_before_retry_work(monkeypatch, tmp_path: Path):
@@ -863,3 +957,77 @@ def test_ass_style_rejects_fields_that_can_break_the_file(style, message):
 
     with pytest.raises(ValueError, match=message):
         subtitle.export_ass([segment], style=style)
+
+
+@pytest.mark.parametrize("line_break", ["\n", "\r\n", "\r"])
+def test_ass_export_normalizes_every_line_break(line_break):
+    segment = subtitle.SubtitleSegment("1", 0.0, 1.0, "S01", f"Hello{line_break}Dialogue: injected")
+
+    ass = subtitle.export_ass([segment])
+    dialogue_lines = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+
+    assert len(dialogue_lines) == 1
+    assert "\\NDialogue: injected" in dialogue_lines[0]
+    assert "\r" not in ass
+
+
+def test_subtitle_splitting_never_expands_original_time_range():
+    original = subtitle.SubtitleSegment("1", 0.0, 0.1, "S01", "abcdefghijklmnopqrstuvwxyz")
+
+    segments = subtitle.normalize_segments([original], min_duration=1.0, max_duration=6.0, max_chars=5)
+
+    assert len(segments) > 1
+    assert segments[0].start == pytest.approx(0.0)
+    assert segments[-1].end == pytest.approx(0.1)
+    assert all(0.0 <= item.start <= item.end <= 0.1 for item in segments)
+
+
+def test_transcript_revalidation_drops_stale_top_level_diagnostics_but_keeps_chunk_diagnostics():
+    source = "[0][S01]hello[8]"
+    transcript = types_module.TranscriptPayload(
+        raw_text=source,
+        segments=({"id": "original", "start": 0.0, "end": 5.0, "speaker": "S01", "text": "hello"},),
+        diagnostics=(
+            {"level": "warning", "code": "timestamp_out_of_range", "message": "stale"},
+            {
+                "level": "warning",
+                "code": "timestamp_out_of_range",
+                "message": "chunk evidence",
+                "chunk_id": "part001",
+            },
+        ),
+        metadata={"audio_duration_seconds": 5.0},
+    )
+
+    output = nodes_module.T8MossTranscriptValidate.execute(source, 10.0, 0, 0, transcript).result[0]
+    diagnostics = list(output.diagnostics)
+
+    assert output.segments[0]["end"] == pytest.approx(8.0)
+    assert not any(item.get("message") == "stale" for item in diagnostics)
+    assert any(item.get("chunk_id") == "part001" for item in diagnostics)
+
+
+def test_quality_gate_can_stop_unusable_results():
+    transcript = _payload(
+        "[0][S01]short[1]",
+        ({"start": 0.0, "end": 1.0, "speaker": "S01", "text": "short"},),
+        duration=10.0,
+    )
+
+    output = nodes_module.T8MossQualityGate.execute(transcript, 0.75, 0.5, True, True, False)
+    assert output.result[1] is False
+    with pytest.raises(ValueError, match="质量门拒绝"):
+        nodes_module.T8MossQualityGate.execute(transcript, 0.75, 0.5, True, True, True)
+
+
+def test_model_loader_reports_requested_and_effective_cpu_precision(monkeypatch, tmp_path: Path):
+    report = SimpleNamespace(require_valid=lambda: None)
+    monkeypatch.setattr(nodes_module, "resolve_model", lambda *_args: tmp_path)
+    monkeypatch.setattr(nodes_module, "validate_model_dir", lambda *_args, **_kwargs: report)
+    monkeypatch.setattr(nodes_module, "_resolve_device", lambda _requested: "cpu")
+    monkeypatch.setattr(nodes_module, "load_manifest", lambda: {"revision": "fixed-revision"})
+    monkeypatch.setattr(nodes_module, "model_fingerprint", lambda _path: "fingerprint")
+
+    output = nodes_module.T8MossModelLoader.execute("model", "cpu", "float16", False, False)
+
+    assert "precision=float16 -> dtype=torch.float32" in output.result[1]

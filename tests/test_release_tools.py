@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 import zipfile
 from pathlib import Path
+
+import pytest
 
 from scripts import build_release, verify_pinned_revisions
 
@@ -29,14 +32,15 @@ def test_revision_targets_use_full_resolvable_urls():
 
 
 def test_release_build_is_reproducible_and_excludes_development_only_files(tmp_path: Path):
-    first = build_release.build_release(tmp_path / "first", expected_tag="v0.3.5")
-    second = build_release.build_release(tmp_path / "second", expected_tag="v0.3.5")
+    first = build_release.build_release(tmp_path / "first")
+    second = build_release.build_release(tmp_path / "second")
     assert [path.name for path in first] == [path.name for path in second]
     assert [path.read_bytes() for path in first] == [path.read_bytes() for path in second]
 
     archive, manifest_path, sums = first
     with zipfile.ZipFile(archive) as package:
         names = package.namelist()
+        assert b"\r\n" not in package.read("LICENSE")
     assert "README.md" in names
     assert "README_EN.md" in names
     assert "requirements-transformers-v5.txt" in names
@@ -61,11 +65,74 @@ def test_release_build_is_reproducible_and_excludes_development_only_files(tmp_p
     assert "os.environ.get(" not in packaged_python
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["node_version"] == "0.3.5"
+    assert manifest["node_version"] == "0.3.6"
     assert manifest["upstream_code_revision"] == EXPECTED_CODE_REVISION
     assert manifest["archive"]["name"] == archive.name
     assert manifest["archive"]["sha256"] == build_release.sha256(archive)
+    assert isinstance(manifest["source_dirty"], bool)
     assert archive.name in sums.read_text(encoding="utf-8")
+
+
+def test_release_selection_excludes_untracked_files():
+    probe = build_release.PLUGIN_ROOT / ".release-untracked-secret-probe"
+    assert not probe.exists()
+    try:
+        probe.write_text("must not be packaged\n", encoding="utf-8")
+        assert probe not in build_release.release_files()
+    finally:
+        probe.unlink(missing_ok=True)
+
+
+def test_release_selection_rejects_tracked_symlinks(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        build_release.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=b"unsafe-link\0"),
+    )
+    original_is_symlink = Path.is_symlink
+    monkeypatch.setattr(
+        Path,
+        "is_symlink",
+        lambda path: path.name == "unsafe-link" or original_is_symlink(path),
+    )
+
+    with pytest.raises(RuntimeError, match="symbolic links"):
+        build_release.release_files()
+
+
+def test_third_party_notices_match_the_source_only_node_package():
+    root = Path(__file__).resolve().parents[1]
+    notices = (root / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    assert "does **not** bundle" in notices
+    assert "manifests/ffmpeg_windows_x64.json" not in notices
+    assert "nvidia-runtime-inventory.json" not in notices
+    modified = (
+        "audio_adapter.py",
+        "inference_utils.py",
+        "modeling_moss_transcribe_diarize.py",
+        "subtitle/__init__.py",
+        "subtitle/export.py",
+        "subtitle/models.py",
+        "subtitle/postprocess.py",
+        "transcript_parser.py",
+        "transcript_validation.py",
+    )
+    vendor = root / "vendor" / "moss_transcribe_diarize"
+    for relative in modified:
+        first_line = (vendor / relative).read_text(encoding="utf-8").splitlines()[0]
+        assert "Modified by the T8star-Aix integration" in first_line
+
+
+def test_tagged_release_requires_matching_clean_head(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(build_release, "source_commit", lambda: "head")
+    monkeypatch.setattr(build_release, "tagged_commit", lambda tag: "other")
+    with pytest.raises(RuntimeError, match="points to other"):
+        build_release.validate_release_source("v0.3.6")
+
+    monkeypatch.setattr(build_release, "tagged_commit", lambda tag: "head")
+    monkeypatch.setattr(build_release, "source_is_dirty", lambda: True)
+    with pytest.raises(RuntimeError, match="clean working tree"):
+        build_release.validate_release_source("v0.3.6")
 
 
 def test_release_and_compatibility_workflows_keep_automatic_delivery_observable():
@@ -76,11 +143,26 @@ def test_release_and_compatibility_workflows_keep_automatic_delivery_observable(
 
     assert "publish-registry:" in release
     assert "needs: release" in release
-    assert "Comfy-Org/publish-node-action@" in release
+    assert "name: Validate and build" in release
+    assert "name: Attest and publish GitHub Release" in release
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in release
+    assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in release
+    assert release.count("persist-credentials: false") == 3
+    assert "python-version: \"3.12\"" in release
+    assert "Comfy-Org/publish-node-action@" not in release
+    assert "Comfy-Org/publish-node-action@" not in retry
+    assert "comfy-cli==1.16.0" in release
+    assert "comfy-cli==1.16.0" in retry
+    assert "refs/tags/${RELEASE_REF}^{commit}" in retry
+    assert 'gh release view "$RELEASE_REF"' in retry
     assert "release_ref:" in retry
+    assert "persist-credentials: false" in retry
     assert "default: main" not in retry
     assert "Registry publication cannot continue" in retry
     assert "exit 1" in retry
     assert "types: [published]" not in retry
     assert 'cron: "15 20 * * 0"' in validate
+    assert 'transformers: "4.52.1"' not in validate
+    assert 'transformers: "4.57.6"' not in validate
+    assert 'transformers: "5.5.0"' in validate
     assert "GITHUB_STEP_SUMMARY" in validate

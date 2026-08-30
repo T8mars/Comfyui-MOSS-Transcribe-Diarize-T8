@@ -1,3 +1,4 @@
+# Modified by the T8star-Aix integration after OpenMOSS cb765f2; see CHANGELOG.md.
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -91,7 +92,7 @@ def normalize_segments(
     regenerate_ids: bool = False,
 ) -> list[SubtitleSegment]:
     prepared = _prepare_segments(segments)
-    prepared = _fix_overlaps(prepared, min_duration=min_duration)
+    prepared = _fix_overlaps(prepared)
     prepared = _merge_adjacent(prepared, merge_gap=merge_gap, max_chars=max_chars)
     prepared = _split_long_segments(
         prepared,
@@ -99,7 +100,7 @@ def normalize_segments(
         max_duration=max_duration,
         max_chars=max_chars,
     )
-    prepared = _fix_overlaps(prepared, min_duration=min_duration)
+    prepared = _fix_overlaps(prepared)
     if regenerate_ids:
         for index, segment in enumerate(prepared, start=1):
             segment.id = f"seg_{index:04d}"
@@ -115,6 +116,8 @@ def _prepare_segments(segments: Iterable[SubtitleSegment | dict]) -> list[Subtit
             continue
         start = max(0.0, float(segment.start))
         end = max(start, float(segment.end))
+        if end <= start:
+            continue
         prepared.append(
             SubtitleSegment(
                 id=segment.id or f"seg_{index:04d}",
@@ -128,12 +131,12 @@ def _prepare_segments(segments: Iterable[SubtitleSegment | dict]) -> list[Subtit
     return prepared
 
 
-def _fix_overlaps(segments: list[SubtitleSegment], *, min_duration: float) -> list[SubtitleSegment]:
+def _fix_overlaps(segments: list[SubtitleSegment]) -> list[SubtitleSegment]:
     cursor = 0.0
     fixed: list[SubtitleSegment] = []
     for segment in segments:
         start = max(segment.start, cursor)
-        end = max(segment.end, start + min_duration)
+        end = max(start, segment.end)
         fixed.append(
             SubtitleSegment(
                 id=segment.id,
@@ -193,20 +196,24 @@ def _split_long_segments(
             output.append(segment)
             continue
 
-        total_chars = sum(max(len(chunk), 1) for chunk in chunks)
+        weights = [max(len(chunk), 1) for chunk in chunks]
+        total_chars = sum(weights)
+        if duration >= min_duration * len(chunks):
+            residual = duration - min_duration * len(chunks)
+            allocations = [min_duration + residual * weight / total_chars for weight in weights]
+        else:
+            allocations = [duration * weight / total_chars for weight in weights]
         cursor = segment.start
         for index, chunk in enumerate(chunks):
             if index == len(chunks) - 1:
                 end = segment.end
             else:
-                ratio = max(len(chunk), 1) / total_chars
-                end = cursor + max(min_duration, duration * ratio)
-                end = min(end, segment.end - min_duration * (len(chunks) - index - 1))
+                end = min(segment.end, cursor + allocations[index])
             output.append(
                 SubtitleSegment(
                     id=f"{segment.id}_{index + 1}",
                     start=cursor,
-                    end=max(end, cursor + min_duration),
+                    end=end,
                     speaker=segment.speaker,
                     text=chunk,
                 )

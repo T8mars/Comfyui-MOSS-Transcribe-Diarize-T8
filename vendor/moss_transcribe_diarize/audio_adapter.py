@@ -1,3 +1,4 @@
+# Modified by the T8star-Aix integration after OpenMOSS cb765f2; see CHANGELOG.md.
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -46,7 +47,7 @@ def resample_waveform(waveform: torch.Tensor, source_rate: int, target_rate: int
         import torchaudio.functional as audio_functional
 
         return audio_functional.resample(waveform, source_rate, target_rate)
-    except (ImportError, OSError):
+    except (ImportError, OSError, RuntimeError):
         import soxr
 
         values = soxr.resample(waveform.squeeze(0).numpy(), source_rate, target_rate)

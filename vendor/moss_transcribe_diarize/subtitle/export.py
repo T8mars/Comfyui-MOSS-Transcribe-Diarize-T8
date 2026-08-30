@@ -1,3 +1,4 @@
+# Modified by the T8star-Aix integration after OpenMOSS cb765f2; see CHANGELOG.md.
 from __future__ import annotations
 
 import json
@@ -185,4 +186,5 @@ def _display_text(
 
 
 def _ass_escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", "\\N")
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", "\\N")

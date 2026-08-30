@@ -1,7 +1,9 @@
+# Modified by the T8star-Aix integration after OpenMOSS cb765f2; see CHANGELOG.md.
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict, dataclass
+import math
 import re
 
 from .transcript_parser import TranscriptSegment, TranscriptStreamParser
@@ -38,6 +40,20 @@ def validate_transcript(
     max_new_tokens: int | None = None,
     audio_rms: float | None = None,
 ) -> TranscriptValidation:
+    if media_duration is not None:
+        try:
+            media_duration = float(media_duration)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("media_duration must be a finite non-negative number.") from exc
+        if not math.isfinite(media_duration) or media_duration < 0:
+            raise ValueError("media_duration must be a finite non-negative number.")
+    if audio_rms is not None:
+        try:
+            audio_rms = float(audio_rms)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("audio_rms must be a finite non-negative number.") from exc
+        if not math.isfinite(audio_rms) or audio_rms < 0:
+            raise ValueError("audio_rms must be a finite non-negative number.")
     diagnostics: list[TranscriptDiagnostic] = []
     parser = TranscriptStreamParser()
     parsed_segments = parser.feed(text)
@@ -88,6 +104,10 @@ def validate_transcript(
             diagnostics.append(
                 TranscriptDiagnostic("error", "invalid_timestamp", f"Segment {index + 1} has an invalid time range.")
             )
+        elif segment.end == segment.start:
+            diagnostics.append(
+                TranscriptDiagnostic("error", "zero_duration", f"Segment {index + 1} has zero duration.")
+            )
         if segment.start < previous_start:
             diagnostics.append(
                 TranscriptDiagnostic("error", "timestamp_order", f"Segment {index + 1} starts before the previous segment.")
@@ -111,10 +131,10 @@ def validate_transcript(
             clamped_segments.append(TranscriptSegment(start, end, segment.speaker, segment.text))
         segments = tuple(clamped_segments)
 
-    if segments and media_duration is not None and media_duration >= 30:
+    if segments and media_duration is not None and media_duration > 0:
         tail_gap = max(0.0, media_duration - segments[-1].end)
-        coverage = segments[-1].end / media_duration if media_duration > 0 else 1.0
-        if tail_gap >= 30.0 and coverage < 0.75:
+        coverage = segments[-1].end / media_duration
+        if coverage < 0.75:
             diagnostics.append(
                 TranscriptDiagnostic(
                     "warning",
