@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "comfyui-moss-transcribe-diarize-t8"
-version = "0.3.8"
+version = "0.4.0"
 description = "ComfyUI V3 nodes for MOSS Transcribe Diarize, by T8star-Aix"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,12 +33,17 @@ classifiers = [
 
 [project.urls]
 Repository = "https://github.com/T8mars/comfyui-MOSS-Transcribe-Diarize-T8"
+Documentation = "https://github.com/T8mars/comfyui-MOSS-Transcribe-Diarize-T8#readme"
+"Bug Tracker" = "https://github.com/T8mars/comfyui-MOSS-Transcribe-Diarize-T8/issues"
 Upstream = "https://github.com/OpenMOSS/MOSS-Transcribe-Diarize"
 Model = "https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize"
 
 [tool.comfy]
 PublisherId = "t8star"
 DisplayName = "MOSS Transcribe Diarize · T8star-Aix"
+Icon = "https://raw.githubusercontent.com/T8mars/Comfyui-MOSS-Transcribe-Diarize-T8/main/assets/icon.svg"
+Banner = "https://raw.githubusercontent.com/T8mars/Comfyui-MOSS-Transcribe-Diarize-T8/main/assets/banner.svg"
+requires-comfyui = ">=0.3.48"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

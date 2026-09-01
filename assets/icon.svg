@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-labelledby="title desc">
+  <title id="title">MOSS Transcribe Diarize T8</title>
+  <desc id="desc">A blue and violet speech waveform inside a rounded square.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07152f"/>
+      <stop offset="1" stop-color="#25114d"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#35d9ff"/>
+      <stop offset="1" stop-color="#b26cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="400" rx="84" fill="url(#bg)"/>
+  <path d="M74 205h34l18-67 30 143 30-196 31 236 28-166 22 96 20-46h39" fill="none" stroke="url(#wave)" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="111" cy="111" r="18" fill="#35d9ff"/>
+  <circle cx="289" cy="289" r="18" fill="#b26cff"/>
+  <text x="200" y="365" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="700" fill="#ffffff">MOSS · T8</text>
+</svg>

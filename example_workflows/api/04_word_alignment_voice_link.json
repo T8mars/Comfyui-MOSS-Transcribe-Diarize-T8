@@ -1,0 +1,122 @@
+{
+  "1": {
+    "class_type": "T8_MOSS_ModelLoader",
+    "inputs": {
+      "model_name": "MOSS-Transcribe-Diarize",
+      "device": "auto",
+      "precision": "auto",
+      "release_after_run": false,
+      "verify_hashes": false,
+      "memory_policy": "release_under_pressure",
+      "attention_implementation": "auto",
+      "custom_model_path": ""
+    }
+  },
+  "2": {"class_type": "LoadAudio", "inputs": {"audio": "long_meeting.wav"}},
+  "3": {
+    "class_type": "T8_MOSS_PromptHotwords",
+    "inputs": {
+      "base_prompt": "请将长音频转写为文本，每段包含起止时间戳与说话人编号。",
+      "preset_id": "zh_meeting",
+      "hotwords": "OpenMOSS, ComfyUI, T8star-Aix",
+      "language_hint": "中文",
+      "strict_format": true,
+      "custom_language_hint": ""
+    }
+  },
+  "4": {
+    "class_type": "T8_MOSS_SmartLongAudio",
+    "inputs": {
+      "model": ["1", 0],
+      "audio": ["2", 0],
+      "max_new_tokens_per_chunk": 0,
+      "prompt": ["3", 0],
+      "target_chunk_minutes": 8.0,
+      "max_chunk_minutes": 10.0,
+      "overlap_seconds": 2.0,
+      "split_strategy": "vad",
+      "silence_policy": "warn",
+      "vad_aggressiveness": 2,
+      "retry_policy": "quality_failure",
+      "checkpoint_mode": "read_write",
+      "checkpoint_id": "long-meeting-auxiliary",
+      "speaker_link_mode": "isolated"
+    }
+  },
+  "5": {
+    "class_type": "T8_MOSS_SpeakerEmbeddingModelLoader",
+    "inputs": {
+      "model_id": "microsoft/wavlm-base-plus-sv",
+      "revision": "feb593a6c23c1cc3d9510425c29b0a14d2b07b1e",
+      "device": "auto",
+      "precision": "auto",
+      "release_after_run": true
+    }
+  },
+  "6": {
+    "class_type": "T8_MOSS_SpeakerEmbeddingLink",
+    "inputs": {
+      "speaker_model": ["5", 0],
+      "audio": ["2", 0],
+      "transcript": ["4", 5],
+      "similarity_threshold": 0.86,
+      "min_speech_seconds": 0.8,
+      "max_reference_seconds": 20.0
+    }
+  },
+  "7": {
+    "class_type": "T8_MOSS_WordAlignmentModelLoader",
+    "inputs": {
+      "model_id": "openai/whisper-small",
+      "revision": "973afd24965f72e36ca33b3055d56a652f456b4d",
+      "device": "auto",
+      "precision": "auto",
+      "language": "auto",
+      "chunk_length_seconds": 30.0,
+      "release_after_run": true
+    }
+  },
+  "8": {
+    "class_type": "T8_MOSS_WordAlignment",
+    "inputs": {
+      "aligner": ["7", 0],
+      "audio": ["2", 0],
+      "transcript": ["6", 0]
+    }
+  },
+  "9": {
+    "class_type": "T8_MOSS_QualityGate",
+    "inputs": {
+      "transcript": ["8", 0],
+      "min_end_coverage": 0.75,
+      "max_unknown_speaker_ratio": 0.5,
+      "reject_repetition": true,
+      "reject_truncation": true,
+      "fail_on_unusable": true
+    }
+  },
+  "10": {
+    "class_type": "T8_MOSS_SubtitlePostprocess",
+    "inputs": {
+      "transcript": ["9", 0],
+      "min_duration": 1.0,
+      "max_duration": 6.0,
+      "max_chars_per_line": 24,
+      "max_lines": 2,
+      "merge_gap": 0.3,
+      "max_chars_per_second": 20.0
+    }
+  },
+  "11": {
+    "class_type": "T8_MOSS_SubtitleExport",
+    "inputs": {
+      "transcript": ["10", 0],
+      "speaker_names_json": "{}",
+      "show_speaker": true,
+      "filename_prefix": "moss_word_aligned_voice_linked",
+      "write_files": true,
+      "chunk_id": "",
+      "cross_chunk_speaker_map_json": "{}"
+    }
+  }
+}

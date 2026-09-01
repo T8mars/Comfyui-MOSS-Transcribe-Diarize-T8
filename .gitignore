@@ -1,4 +1,8 @@
 __pycache__/
+benchmarks/audio/
+benchmarks/references/
+benchmarks/generated/
+benchmarks/results/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/

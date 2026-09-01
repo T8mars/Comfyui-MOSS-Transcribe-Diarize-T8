@@ -21,8 +21,9 @@ from ..vendor.moss_transcribe_diarize.generation_budget import estimate_max_new_
 
 
 CHECKPOINT_SCHEMA = "t8.moss-long-audio-checkpoint.v1"
-LONG_AUDIO_ALGORITHM_VERSION = "t8.moss-long-audio.v2"
+LONG_AUDIO_ALGORITHM_VERSION = "t8.moss-long-audio.v3"
 MAX_CHECKPOINT_NAME_LENGTH = 96
+SPEAKER_LINK_MIN_TEXT_LENGTH = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,12 +172,15 @@ def transcribe_long_audio(
     checkpoint_mode: str = "read_write",
     checkpoint_dir: Path | None = None,
     checkpoint_id: str = "",
+    speaker_link_mode: str = "off",
 ) -> tuple[TranscriptPayload, dict[str, Any]]:
     array = np.asarray(samples, dtype=np.float32).reshape(-1)
     if sample_rate != 16000:
         raise ValueError("Smart long-audio runtime expects 16 kHz samples.")
     if checkpoint_mode not in {"off", "read_write", "restart"}:
         raise ValueError("checkpoint_mode must be off, read_write, or restart.")
+    if speaker_link_mode not in {"off", "overlap_only"}:
+        raise ValueError("speaker_link_mode must be off or overlap_only.")
     chunks = plan_audio_chunks(
         array,
         sample_rate,
@@ -204,6 +208,7 @@ def transcribe_long_audio(
         preflight_backend=preflight_backend,
         vad_aggressiveness=vad_aggressiveness,
         retry_policy=retry_policy,
+        speaker_link_mode=speaker_link_mode,
     )
     checkpoint_path = _checkpoint_path(checkpoint_dir, checkpoint_id, fingerprint, checkpoint_mode)
     total_budget = max(1, sum(budgets))
@@ -228,7 +233,7 @@ def transcribe_long_audio(
                 cancellation()
             if chunk.index in payloads:
                 continue
-            if entry is None:
+            if entry is None and not handle.is_remote:
                 entry = MODEL_CACHE.acquire(handle)
             base = sum(budgets[: chunk.index - 1])
             high_water = [base]
@@ -272,14 +277,19 @@ def transcribe_long_audio(
             _save_checkpoint(checkpoint_path, fingerprint, chunks, payloads)
     finally:
         try:
-            if entry is not None:
+            if entry is not None and not handle.is_remote:
                 MODEL_CACHE.done(handle, entry)
         finally:
             if checkpoint_lock is not None:
                 checkpoint_lock.release()
 
     ordered_payloads = [payloads[chunk.index] for chunk in chunks]
-    merged = merge_chunk_payloads(chunks, ordered_payloads, total_duration=array.size / float(sample_rate))
+    merged = merge_chunk_payloads(
+        chunks,
+        ordered_payloads,
+        total_duration=array.size / float(sample_rate),
+        speaker_link_mode=speaker_link_mode,
+    )
     merged.metadata.update(
         {
             "mode": "smart_long_audio",
@@ -287,6 +297,7 @@ def transcribe_long_audio(
             "target_chunk_seconds": target_seconds,
             "max_chunk_seconds": max_seconds,
             "overlap_seconds": overlap_seconds,
+            "speaker_link_mode": speaker_link_mode,
             "checkpoint": str(checkpoint_path) if checkpoint_path is not None else None,
             "checkpoint_fingerprint": fingerprint,
             "checkpoint_status": checkpoint_status,
@@ -300,6 +311,9 @@ def transcribe_long_audio(
         "resumed_chunks": sorted(completed),
         "checkpoint": str(checkpoint_path) if checkpoint_path is not None else None,
         "checkpoint_status": checkpoint_status,
+        "speaker_link_mode": speaker_link_mode,
+        "speaker_links": merged.metadata.get("speaker_links", []),
+        "speaker_link_conflicts": merged.metadata.get("speaker_link_conflicts", []),
         "quality": merged.metadata["quality"],
     }
     return merged, report
@@ -310,12 +324,17 @@ def merge_chunk_payloads(
     payloads: list[TranscriptPayload],
     *,
     total_duration: float,
+    speaker_link_mode: str = "off",
 ) -> TranscriptPayload:
     if len(chunks) != len(payloads):
         raise ValueError("chunks and payloads must have equal length.")
+    if speaker_link_mode not in {"off", "overlap_only"}:
+        raise ValueError("speaker_link_mode must be off or overlap_only.")
     merged_segments: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
     chunk_reports: list[dict[str, Any]] = []
+    speaker_links: list[dict[str, Any]] = []
+    speaker_link_conflicts: list[dict[str, Any]] = []
     chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
 
     for chunk, payload in zip(chunks, payloads, strict=True):
@@ -330,8 +349,9 @@ def merge_chunk_payloads(
                 "metadata": payload.metadata,
             }
         )
+        candidates = []
         for local_index, item in enumerate(payload.segments, 1):
-            candidate = {
+            candidates.append({
                 "id": f"{chunk.chunk_id}/seg-{local_index:05d}",
                 "start": min(total_duration, chunk.start_seconds + float(item.get("start", 0.0))),
                 "end": min(total_duration, chunk.start_seconds + float(item.get("end", 0.0))),
@@ -339,10 +359,69 @@ def merge_chunk_payloads(
                 "text": str(item.get("text") or "").strip(),
                 "chunk_id": chunk.chunk_id,
                 "local_speaker": str(item.get("speaker") or "S00"),
-            }
+            })
+        chunk_speaker_map: dict[str, str] = {}
+        if speaker_link_mode == "overlap_only":
+            evidence: dict[str, list[tuple[dict[str, Any], float]]] = {}
+            for candidate in candidates:
+                local_speaker = str(candidate["local_speaker"])
+                match = _find_overlap_duplicate(candidate, merged_segments, chunks_by_id)
+                if (
+                    match is not None
+                    and local_speaker != "S00"
+                    and str(match[0].get("speaker") or "S00") != "S00"
+                    and len(_normalize_text(str(candidate.get("text") or ""))) >= SPEAKER_LINK_MIN_TEXT_LENGTH
+                ):
+                    evidence.setdefault(local_speaker, []).append(match)
+            tentative: dict[str, tuple[str, list[tuple[dict[str, Any], float]]]] = {}
+            for local_speaker, matches in sorted(evidence.items()):
+                targets = {str(item.get("speaker")) for item, _score in matches}
+                if len(targets) == 1:
+                    tentative[local_speaker] = (targets.pop(), matches)
+                else:
+                    speaker_link_conflicts.append(
+                        {
+                            "chunk_id": chunk.chunk_id,
+                            "local_speaker": local_speaker,
+                            "candidate_speakers": sorted(targets),
+                            "reason": "conflicting_overlap_evidence",
+                        }
+                    )
+            locals_by_target: dict[str, list[str]] = {}
+            for local_speaker, (target, _matches) in tentative.items():
+                locals_by_target.setdefault(target, []).append(local_speaker)
+            for local_speaker, (target, matches) in sorted(tentative.items()):
+                colliding_locals = sorted(locals_by_target[target])
+                if len(colliding_locals) > 1:
+                    speaker_link_conflicts.append(
+                        {
+                            "chunk_id": chunk.chunk_id,
+                            "local_speaker": local_speaker,
+                            "candidate_speakers": [target],
+                            "colliding_local_speakers": colliding_locals,
+                            "reason": "multiple_local_speakers_target_same_speaker",
+                        }
+                    )
+                    continue
+                chunk_speaker_map[local_speaker] = target
+                speaker_links.append(
+                    {
+                        "chunk_id": chunk.chunk_id,
+                        "local_speaker": local_speaker,
+                        "speaker": target,
+                        "method": "overlap_text_time",
+                        "confidence": round(max(score for _item, score in matches), 4),
+                        "evidence_count": len(matches),
+                        "evidence_segment_ids": [str(item.get("id") or "") for item, _score in matches],
+                    }
+                )
+        for candidate in candidates:
+            mapped_speaker = chunk_speaker_map.get(str(candidate["local_speaker"]))
+            if mapped_speaker:
+                candidate["speaker"] = mapped_speaker
             if candidate["end"] < candidate["start"]:
                 candidate["end"] = candidate["start"]
-            if _is_overlap_duplicate(candidate, merged_segments, chunks_by_id):
+            if _find_overlap_duplicate(candidate, merged_segments, chunks_by_id) is not None:
                 continue
             merged_segments.append(candidate)
 
@@ -356,7 +435,12 @@ def merge_chunk_payloads(
         {
             "level": "info",
             "code": "smart_long_audio_chunking",
-            "message": f"长音频已按 {len(chunks)} 个分片处理；说话人编号按分片命名空间隔离。",
+            "message": (
+                f"长音频已按 {len(chunks)} 个分片处理；通过重叠证据建立 {len(speaker_links)} 个保守说话人关联，"
+                "其余编号仍按分片命名空间隔离。"
+                if speaker_link_mode == "overlap_only"
+                else f"长音频已按 {len(chunks)} 个分片处理；说话人编号按分片命名空间隔离。"
+            ),
         },
     )
     return TranscriptPayload(
@@ -366,7 +450,9 @@ def merge_chunk_payloads(
         metadata={
             "audio_duration_seconds": total_duration,
             "sample_rate": 16000,
-            "speaker_scope": "chunk_namespaced",
+            "speaker_scope": "chunk_namespaced_with_overlap_links" if speaker_links else "chunk_namespaced",
+            "speaker_links": speaker_links,
+            "speaker_link_conflicts": speaker_link_conflicts,
             "chunks": chunk_reports,
             "audio_preflight": _aggregate_audio_preflight(chunks, payloads),
         },
@@ -422,17 +508,18 @@ def _aggregate_preflight_classification(speech_ratio: float, classifications: li
     return "speech"
 
 
-def _is_overlap_duplicate(
+def _find_overlap_duplicate(
     candidate: dict[str, Any],
     previous: list[dict[str, Any]],
     chunks_by_id: dict[str, AudioChunk],
-) -> bool:
+) -> tuple[dict[str, Any], float] | None:
     text = _normalize_text(str(candidate.get("text") or ""))
     if not text:
-        return True
+        return ({}, 1.0)
     candidate_chunk = chunks_by_id.get(str(candidate.get("chunk_id") or ""))
     if candidate_chunk is None:
-        return False
+        return None
+    best: tuple[dict[str, Any], float] | None = None
     for item in reversed(previous):
         if item.get("chunk_id") == candidate.get("chunk_id"):
             continue
@@ -453,10 +540,24 @@ def _is_overlap_duplicate(
             continue
         other = _normalize_text(str(item.get("text") or ""))
         if text == other:
-            return True
-        if min(len(text), len(other)) >= 12 and SequenceMatcher(None, text, other).ratio() >= 0.90:
-            return True
-    return False
+            score = 1.0
+        elif min(len(text), len(other)) >= 12:
+            score = SequenceMatcher(None, text, other).ratio()
+            if score < 0.90:
+                continue
+        else:
+            continue
+        if best is None or score > best[1]:
+            best = (item, score)
+    return best
+
+
+def _is_overlap_duplicate(
+    candidate: dict[str, Any],
+    previous: list[dict[str, Any]],
+    chunks_by_id: dict[str, AudioChunk],
+) -> bool:
+    return _find_overlap_duplicate(candidate, previous, chunks_by_id) is not None
 
 
 def _intersects_window(segment: dict[str, Any], start: float, end: float) -> bool:
@@ -500,13 +601,8 @@ def _job_fingerprint(
     digest.update(
         json.dumps(
             {
-                "model_revision": handle.model_revision,
-                "model_fingerprint": handle.model_fingerprint,
+                "inference_identity": handle.inference_identity,
                 "long_audio_algorithm_version": LONG_AUDIO_ALGORITHM_VERSION,
-                "model_dir": str(handle.model_dir.resolve()),
-                "device": handle.device,
-                "precision": handle.precision,
-                "attention_implementation": handle.attention_implementation,
                 "prompt": prompt.text if prompt else "",
                 "chunks": [asdict(chunk) for chunk in chunks],
                 "budgets": budgets,

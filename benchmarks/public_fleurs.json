@@ -1,0 +1,32 @@
+{
+  "schema": "t8.moss-public-benchmark-source.v1",
+  "dataset": "google/fleurs",
+  "revision": "70bb2e84b976b7e960aa89f1c648e09c59f894dd",
+  "license": "CC-BY-4.0",
+  "dataset_card": "https://huggingface.co/datasets/google/fleurs",
+  "attribution": "FLEURS: Few-shot Learning Evaluation of Universal Representations of Speech, Conneau et al.",
+  "split": "validation",
+  "cases": {
+    "zh-two-speaker-meeting": [
+      { "config": "cmn_hans_cn", "row": 0 },
+      { "config": "cmn_hans_cn", "row": 1 },
+      { "config": "cmn_hans_cn", "row": 2 }
+    ],
+    "en-hotwords-capitalization": [
+      { "config": "en_us", "row": 1 },
+      { "config": "en_us", "row": 3 }
+    ],
+    "multilingual-switching": [
+      { "config": "cmn_hans_cn", "row": 2 },
+      { "config": "en_us", "row": 0 },
+      { "config": "ja_jp", "row": 0 }
+    ]
+  },
+  "long_case": {
+    "id": "noisy-multilingual-30min",
+    "configs": ["cmn_hans_cn", "en_us"],
+    "target_minutes": 30,
+    "noise_snr_db": 18.0,
+    "silence_between_clips_seconds": 0.35
+  }
+}

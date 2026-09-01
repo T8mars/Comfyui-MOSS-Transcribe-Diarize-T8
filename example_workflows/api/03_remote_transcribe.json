@@ -1,0 +1,60 @@
+{
+  "1": {
+    "class_type": "T8_MOSS_RemoteModelLoader",
+    "inputs": {
+      "endpoint_url": "http://127.0.0.1:8000",
+      "remote_model": "OpenMOSS-Team/MOSS-Transcribe-Diarize",
+      "timeout_seconds": 300.0,
+      "allow_remote_upload": false
+    }
+  },
+  "2": {"class_type": "LoadAudio", "inputs": {"audio": "meeting.wav"}},
+  "3": {
+    "class_type": "T8_MOSS_PromptHotwords",
+    "inputs": {
+      "base_prompt": "",
+      "preset_id": "en_meeting",
+      "hotwords": "OpenMOSS, ComfyUI, T8star-Aix",
+      "language_hint": "English",
+      "strict_format": true,
+      "custom_language_hint": ""
+    }
+  },
+  "4": {
+    "class_type": "T8_MOSS_TranscribeDiarize",
+    "inputs": {
+      "model": ["1", 0],
+      "audio": ["2", 0],
+      "max_new_tokens": 0,
+      "prompt": ["3", 0],
+      "silence_policy": "warn",
+      "preflight_backend": "webrtc",
+      "vad_aggressiveness": 2,
+      "retry_policy": "quality_failure"
+    }
+  },
+  "5": {
+    "class_type": "T8_MOSS_SubtitlePostprocess",
+    "inputs": {
+      "transcript": ["4", 5],
+      "min_duration": 1.0,
+      "max_duration": 6.0,
+      "max_chars_per_line": 42,
+      "max_lines": 2,
+      "merge_gap": 0.3,
+      "max_chars_per_second": 20.0
+    }
+  },
+  "6": {
+    "class_type": "T8_MOSS_SubtitleExport",
+    "inputs": {
+      "transcript": ["5", 0],
+      "speaker_names_json": "{}",
+      "show_speaker": true,
+      "filename_prefix": "moss_remote",
+      "write_files": true,
+      "chunk_id": "",
+      "cross_chunk_speaker_map_json": "{}"
+    }
+  }
+}

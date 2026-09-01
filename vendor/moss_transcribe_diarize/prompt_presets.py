@@ -1,8 +1,39 @@
+# Modified by the T8star-Aix integration after OpenMOSS cb765f2; see CHANGELOG.md.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from .inference_utils import DEFAULT_PROMPT
+from .inference_utils import DEFAULT_PROMPT, DEFAULT_PROMPT_EN
+
+
+CUSTOM_LANGUAGE_OPTION = "自定义 / Custom"
+LANGUAGE_HINT_OPTIONS = (
+    "auto",
+    "中文",
+    "English",
+    "日本語",
+    "한국어",
+    "粤语",
+    "Español",
+    "Français",
+    "Deutsch",
+    "Italiano",
+    "Português",
+    "Русский",
+    "ไทย",
+    "Tiếng Việt",
+    "Tagalog",
+    "हिन्दी",
+    "मराठी",
+    "اردو",
+    "العربية",
+    "Türkçe",
+    "Polski",
+    "Nederlands",
+    "Bahasa Indonesia",
+    "Bahasa Melayu",
+    CUSTOM_LANGUAGE_OPTION,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,26 +100,56 @@ def compose_prompt(
     language_hint: str = "auto",
     hotwords: str = "",
     strict_format: bool = True,
+    custom_language_hint: str = "",
 ) -> tuple[str, tuple[str, ...], str]:
     try:
         preset = PRESET_BY_ID[preset_id]
     except KeyError as exc:
         raise ValueError(f"Unknown prompt preset: {preset_id}") from exc
     resolved_language = language_hint if language_hint != "auto" else preset.language_hint
+    if resolved_language == CUSTOM_LANGUAGE_OPTION:
+        resolved_language = custom_language_hint.strip()
+        if not resolved_language:
+            raise ValueError("选择自定义语言后必须填写自定义语言提示。")
     words = tuple(dict.fromkeys(item.strip() for item in hotwords.replace("，", ",").split(",") if item.strip()))
     additions = []
+    use_english_instructions = resolved_language not in {"auto", "中文", "粤语"}
     if preset.instruction:
         additions.append(preset.instruction)
     if resolved_language != "auto":
-        additions.append(f"主要语言提示：{resolved_language}。")
+        additions.append(
+            f"Primary language: {resolved_language}. Do not translate."
+            if use_english_instructions
+            else f"主要语言提示：{resolved_language}。不要翻译。"
+        )
     if words:
-        additions.append("热词（仅在音频确实出现时采用）：" + "、".join(words) + "。")
+        additions.append(
+            "Hotwords (use only when spoken; preserve the supplied spelling and capitalization): "
+            + ", ".join(words)
+            + "."
+            if use_english_instructions
+            else "热词（仅在音频确实出现时采用，并保持给定写法）：" + "、".join(words) + "。"
+        )
     if strict_format:
-        additions.append("只输出 [开始秒数][Sxx]正文[结束秒数] 段落，不要输出解释、标题或 Markdown。")
-    text = base_prompt.strip() or DEFAULT_PROMPT
+        additions.append(
+            "Return only [start_seconds][Sxx]text[end_seconds] segments; do not add explanations, headings, or Markdown."
+            if use_english_instructions
+            else "只输出 [开始秒数][Sxx]正文[结束秒数] 段落，不要输出解释、标题或 Markdown。"
+        )
+    text = base_prompt.strip() or (DEFAULT_PROMPT_EN if use_english_instructions else DEFAULT_PROMPT)
+    if use_english_instructions and text == DEFAULT_PROMPT:
+        text = DEFAULT_PROMPT_EN
     if additions:
         text = text.rstrip() + "\n" + "\n".join(additions)
     return text, words, resolved_language
 
 
-__all__ = ["PRESET_BY_ID", "PROMPT_PRESETS", "PromptPreset", "compose_prompt", "list_prompt_presets"]
+__all__ = [
+    "CUSTOM_LANGUAGE_OPTION",
+    "LANGUAGE_HINT_OPTIONS",
+    "PRESET_BY_ID",
+    "PROMPT_PRESETS",
+    "PromptPreset",
+    "compose_prompt",
+    "list_prompt_presets",
+]

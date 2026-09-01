@@ -18,6 +18,7 @@ from ..vendor.moss_transcribe_diarize.inference_utils import (
 )
 from ..vendor.moss_transcribe_diarize.transcript_validation import validate_transcript
 from ..vendor.moss_transcribe_diarize.prompt_presets import compose_prompt
+from .remote import request_remote_transcription
 
 
 STRICT_RETRY_SUFFIX = (
@@ -31,7 +32,7 @@ def _comfy_runtime_callbacks(total_tokens: int):
     """Return ComfyUI progress/cancellation callbacks without import-time coupling."""
     try:
         import comfy.model_management
-    except ImportError:
+    except (ImportError, RuntimeError, AssertionError):
         return None, None
 
     native_progress = None
@@ -85,6 +86,7 @@ def build_prompt(
     language_hint: str,
     strict_format: bool,
     preset_id: str = "default",
+    custom_language_hint: str = "",
 ) -> PromptConfig:
     text, words, resolved_language = compose_prompt(
         base_prompt=base_prompt,
@@ -92,6 +94,7 @@ def build_prompt(
         language_hint=language_hint,
         hotwords=hotwords,
         strict_format=strict_format,
+        custom_language_hint=custom_language_hint,
     )
     return PromptConfig(text=text, hotwords=words, language_hint=resolved_language)
 
@@ -170,46 +173,66 @@ def run_transcription_samples(
         cancellation_callback = cancellation_callback or comfy_cancellation
     if cancellation_callback is not None:
         cancellation_callback()
-    owns_cache_entry = cache_entry is None
-    entry = cache_entry if cache_entry is not None else MODEL_CACHE.acquire(handle)
-    try:
-        with entry.lock:
-            if cancellation_callback is not None:
-                cancellation_callback()
-            result, validation = _generate_and_validate(
-                entry,
+    base_prompt = prompt.text if prompt else DEFAULT_PROMPT
+    entry = None
+    owns_cache_entry = False
+    if handle.is_remote:
+        def generate_attempt(prompt_text: str, progress_offset: int):
+            return _generate_remote_and_validate(
+                handle,
                 samples,
-                prompt.text if prompt else DEFAULT_PROMPT,
+                prompt_text,
+                language_hint=prompt.language_hint if prompt else "auto",
                 duration=duration,
                 token_budget=token_budget,
-                progress_offset=0,
+                progress_offset=progress_offset,
                 progress_total=progress_total,
                 progress_callback=progress_callback,
                 cancellation_callback=cancellation_callback,
             )
-            first_result = result
-            retry_reason = _retry_reason(validation, retry_policy)
-            retry_result = None
-            retry_validation = None
-            retry_selected = False
-            if retry_reason is not None:
-                retry_result, retry_validation = _generate_and_validate(
-                    entry,
-                    samples,
-                    (prompt.text if prompt else DEFAULT_PROMPT) + STRICT_RETRY_SUFFIX,
-                    duration=duration,
-                    token_budget=token_budget,
-                    progress_offset=token_budget,
-                    progress_total=progress_total,
-                    progress_callback=progress_callback,
-                    cancellation_callback=cancellation_callback,
+
+        runtime_device = "remote"
+        runtime_dtype = "server_managed"
+        attention_report = {"selected": "server_managed", "backend": handle.backend}
+        result, validation, first_result, retry_result, retry_reason, retry_selected = _run_attempts(
+            generate_attempt,
+            base_prompt,
+            token_budget,
+            retry_policy,
+        )
+    else:
+        owns_cache_entry = cache_entry is None
+        entry = cache_entry if cache_entry is not None else MODEL_CACHE.acquire(handle)
+        try:
+            with entry.lock:
+                if cancellation_callback is not None:
+                    cancellation_callback()
+
+                def generate_attempt(prompt_text: str, progress_offset: int):
+                    return _generate_and_validate(
+                        entry,
+                        samples,
+                        prompt_text,
+                        duration=duration,
+                        token_budget=token_budget,
+                        progress_offset=progress_offset,
+                        progress_total=progress_total,
+                        progress_callback=progress_callback,
+                        cancellation_callback=cancellation_callback,
+                    )
+
+                result, validation, first_result, retry_result, retry_reason, retry_selected = _run_attempts(
+                    generate_attempt,
+                    base_prompt,
+                    token_budget,
+                    retry_policy,
                 )
-                if _validation_rank(retry_validation) > _validation_rank(validation):
-                    result, validation = retry_result, retry_validation
-                    retry_selected = True
-    finally:
-        if owns_cache_entry:
-            MODEL_CACHE.done(handle, entry)
+            runtime_device = str(entry.device)
+            runtime_dtype = str(entry.dtype)
+            attention_report = entry.attention_report
+        finally:
+            if owns_cache_entry and entry is not None:
+                MODEL_CACHE.done(handle, entry)
 
     retry_diagnostics: list[dict] = []
     if retry_reason is not None:
@@ -243,10 +266,12 @@ def run_transcription_samples(
             "max_new_tokens": token_budget,
             "possibly_truncated": validation.possibly_truncated,
             "model_revision": handle.model_revision,
-            "device": str(entry.device),
-            "dtype": str(entry.dtype),
+            "backend": handle.backend,
+            "device": runtime_device,
+            "dtype": runtime_dtype,
             "memory_policy": handle.effective_memory_policy,
-            "attention": entry.attention_report,
+            "attention": attention_report,
+            "remote": result.get("remote"),
             "audio_preflight": preflight.to_dict(),
             "retry": {
                 "policy": retry_policy,
@@ -262,6 +287,57 @@ def run_transcription_samples(
     if progress_callback is not None:
         progress_callback(progress_total, progress_total)
     return payload
+
+
+def _run_attempts(generate_attempt, base_prompt: str, token_budget: int, retry_policy: str):
+    result, validation = generate_attempt(base_prompt, 0)
+    first_result = result
+    retry_reason = _retry_reason(validation, retry_policy)
+    retry_result = None
+    retry_selected = False
+    if retry_reason is not None:
+        retry_result, retry_validation = generate_attempt(base_prompt + STRICT_RETRY_SUFFIX, token_budget)
+        if _validation_rank(retry_validation) > _validation_rank(validation):
+            result, validation = retry_result, retry_validation
+            retry_selected = True
+    return result, validation, first_result, retry_result, retry_reason, retry_selected
+
+
+def _generate_remote_and_validate(
+    handle: ModelHandle,
+    samples: np.ndarray,
+    prompt_text: str,
+    *,
+    language_hint: str,
+    duration: float,
+    token_budget: int,
+    progress_offset: int,
+    progress_total: int,
+    progress_callback: Callable[[int, int], None] | None,
+    cancellation_callback: Callable[[], bool] | None,
+):
+    if cancellation_callback is not None:
+        cancellation_callback()
+    result = request_remote_transcription(
+        handle,
+        samples,
+        sample_rate=TARGET_SAMPLE_RATE,
+        prompt=prompt_text,
+        language=language_hint,
+        max_new_tokens=token_budget,
+    )
+    if cancellation_callback is not None:
+        cancellation_callback()
+    if progress_callback is not None:
+        progress_callback(progress_offset + token_budget, progress_total)
+    validation = validate_transcript(
+        result["text"],
+        media_duration=duration,
+        generated_tokens=int(result["generated_tokens"]),
+        max_new_tokens=token_budget,
+        audio_rms=float(np.sqrt(np.mean(np.square(samples, dtype=np.float64)))) if samples.size else 0.0,
+    )
+    return result, validation
 
 
 def _generate_and_validate(

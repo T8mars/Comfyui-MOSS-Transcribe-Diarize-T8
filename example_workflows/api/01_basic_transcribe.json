@@ -20,7 +20,8 @@
       "preset_id": "zh_meeting",
       "hotwords": "OpenMOSS, ComfyUI, T8star-Aix",
       "language_hint": "中文",
-      "strict_format": true
+      "strict_format": true,
+      "custom_language_hint": ""
     }
   },
   "4": {
@@ -42,7 +43,7 @@
   "5": {
     "class_type": "T8_MOSS_SubtitleExport",
     "inputs": {
-      "transcript": ["4", 5],
+      "transcript": ["7", 0],
       "speaker_names_json": "{\"S01\": \"主持人\", \"S02\": \"嘉宾\"}",
       "show_speaker": true,
       "filename_prefix": "moss_meeting",
@@ -50,6 +51,18 @@
       "chunk_id": "meeting-part1",
       "cross_chunk_speaker_map_json": "{}",
       "style": ["6", 0]
+    }
+  },
+  "7": {
+    "class_type": "T8_MOSS_SubtitlePostprocess",
+    "inputs": {
+      "transcript": ["4", 5],
+      "min_duration": 1.0,
+      "max_duration": 6.0,
+      "max_chars_per_line": 24,
+      "max_lines": 2,
+      "merge_gap": 0.3,
+      "max_chars_per_second": 20.0
     }
   }
 }

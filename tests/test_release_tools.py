@@ -44,6 +44,11 @@ def test_release_build_is_reproducible_and_excludes_development_only_files(tmp_p
     assert "README.md" in names
     assert "README_EN.md" in names
     assert "requirements-transformers-v5.txt" in names
+    assert "runtime/remote.py" in names
+    assert "assets/icon.svg" in names
+    assert "assets/banner.svg" in names
+    assert "benchmarks/cases.example.json" in names
+    assert "scripts/run_benchmarks.py" in names
     assert "requirements-transformers-v4.txt" not in names
     assert "scripts/download_models.py" in names
     assert "scripts/build_release.py" not in names
@@ -65,7 +70,7 @@ def test_release_build_is_reproducible_and_excludes_development_only_files(tmp_p
     assert "os.environ.get(" not in packaged_python
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["node_version"] == "0.3.8"
+    assert manifest["node_version"] == "0.4.0"
     assert b"\r\n" not in manifest_path.read_bytes()
     assert b"\r\n" not in sums.read_bytes()
     assert manifest["upstream_code_revision"] == EXPECTED_CODE_REVISION
@@ -112,6 +117,7 @@ def test_third_party_notices_match_the_source_only_node_package():
         "audio_adapter.py",
         "inference_utils.py",
         "modeling_moss_transcribe_diarize.py",
+        "prompt_presets.py",
         "subtitle/__init__.py",
         "subtitle/export.py",
         "subtitle/models.py",
@@ -147,14 +153,18 @@ def test_release_and_compatibility_workflows_keep_automatic_delivery_observable(
     assert "needs: release" in release
     assert "name: Validate and build" in release
     assert "name: Attest and publish GitHub Release" in release
-    assert "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f" in release
-    assert "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131" in release
+    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in release
+    assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in release
     assert release.count("persist-credentials: false") == 3
     assert "python-version: \"3.12\"" in release
     assert "Comfy-Org/publish-node-action@" not in release
     assert "Comfy-Org/publish-node-action@" not in retry
-    assert "comfy-cli==1.16.0" in release
-    assert "comfy-cli==1.16.0" in retry
+    assert "comfy-cli==1.19.0" in release
+    assert "comfy-cli==1.19.0" in retry
+    assert 'python-version: "3.13"' in release
+    assert "torch==2.13.0" in release
+    assert "transformers==5.16.1" in release
+    assert "ruff==0.16.5" in release
     assert "refs/tags/${RELEASE_REF}^{commit}" in retry
     assert 'gh release view "$RELEASE_REF"' in retry
     assert "release_ref:" in retry

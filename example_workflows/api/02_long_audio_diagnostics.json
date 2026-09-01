@@ -20,7 +20,8 @@
       "preset_id": "zh_meeting",
       "hotwords": "OpenMOSS, ComfyUI, T8star-Aix",
       "language_hint": "中文",
-      "strict_format": true
+      "strict_format": true,
+      "custom_language_hint": ""
     }
   },
   "4": {
@@ -29,7 +30,8 @@
       "model": ["1", 0], "audio": ["2", 0], "max_new_tokens_per_chunk": 0, "prompt": ["3", 0],
       "target_chunk_minutes": 8.0, "max_chunk_minutes": 10.0, "overlap_seconds": 1.0,
       "split_strategy": "vad", "silence_policy": "warn", "vad_aggressiveness": 2,
-      "retry_policy": "quality_failure", "checkpoint_mode": "read_write", "checkpoint_id": "long-meeting"
+      "retry_policy": "quality_failure", "checkpoint_mode": "read_write", "checkpoint_id": "long-meeting",
+      "speaker_link_mode": "overlap_only"
     }
   },
   "5": {
@@ -46,7 +48,7 @@
   "6": {
     "class_type": "T8_MOSS_SubtitleExport",
     "inputs": {
-      "transcript": ["5", 0],
+      "transcript": ["8", 0],
       "speaker_names_json": "{}",
       "show_speaker": true,
       "filename_prefix": "moss_long_audio_checked",
@@ -58,5 +60,17 @@
   "7": {
     "class_type": "T8_MOSS_EnvironmentRelease",
     "inputs": {"action": "report_only", "model": ["1", 0]}
+  },
+  "8": {
+    "class_type": "T8_MOSS_SubtitlePostprocess",
+    "inputs": {
+      "transcript": ["5", 0],
+      "min_duration": 1.0,
+      "max_duration": 6.0,
+      "max_chars_per_line": 24,
+      "max_lines": 2,
+      "merge_gap": 0.3,
+      "max_chars_per_second": 20.0
+    }
   }
 }

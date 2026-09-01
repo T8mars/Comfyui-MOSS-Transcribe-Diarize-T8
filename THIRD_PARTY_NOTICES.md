@@ -12,4 +12,16 @@ snapshot separately from Hugging Face. Python dependencies listed in `requiremen
 optional `requirements-transformers-v5.txt` are installed separately by the user's environment and
 remain subject to their own upstream licenses and notices.
 
+The optional word-alignment workflow downloads the pinned
+[`openai/whisper-small`](https://huggingface.co/openai/whisper-small) snapshot, whose model card
+declares Apache-2.0. The optional voice-link workflow downloads the pinned
+[`microsoft/wavlm-base-plus-sv`](https://huggingface.co/microsoft/wavlm-base-plus-sv) snapshot.
+Neither auxiliary model is included in this repository or release ZIP; each remains subject to its
+upstream model card, license, and usage terms.
+
+The public real-audio benchmark generator downloads selected rows from the pinned
+[`google/fleurs`](https://huggingface.co/datasets/google/fleurs) revision under CC-BY-4.0 and writes
+source IDs, hashes, and attribution into a local provenance file. Downloaded/generated benchmark
+audio is ignored by Git and is not distributed in the release ZIP.
+
 No third-party project endorses the T8star-Aix integration unless explicitly stated by that project.

@@ -10,7 +10,7 @@ from packaging.version import Version
 
 MIN_TRANSFORMERS = Version("5.5.0")
 MAX_TRANSFORMERS = Version("6.0.0")
-TESTED_TRANSFORMERS = ("5.6.0", "5.15.1")
+TESTED_TRANSFORMERS = ("5.6.0", "5.16.1")
 
 
 @dataclass(frozen=True, slots=True)

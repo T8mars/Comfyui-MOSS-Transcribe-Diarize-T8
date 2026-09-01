@@ -177,7 +177,7 @@ def test_requirements_never_replace_comfyui_torch_stack():
     assert '"torch' not in pyproject
     assert not (model_store.PLUGIN_ROOT / "requirements-transformers-v4.txt").exists()
     optional = (model_store.PLUGIN_ROOT / "requirements-transformers-v5.txt").read_text(encoding="utf-8").lower()
-    assert "transformers==5.15.1" in optional
+    assert "transformers==5.16.1" in optional
     checker = (model_store.PLUGIN_ROOT / "scripts" / "check_transformers.py").read_text(encoding="utf-8")
     assert 'Version("5.5.0")' in checker
     assert "security minimum 5.5.0" in checker
@@ -208,7 +208,7 @@ def test_ui_workflows_reference_current_node_package_version():
             for node in payload.get("nodes", [])
             if node.get("properties", {}).get("cnr_id") == "comfyui-moss-transcribe-diarize-t8"
         }
-        assert versions == {"0.3.8"}, f"{path.name} has stale node versions: {versions}"
+        assert versions == {"0.4.0"}, f"{path.name} has stale node versions: {versions}"
 
 
 def test_manifest_is_pinned_to_reviewed_revisions():

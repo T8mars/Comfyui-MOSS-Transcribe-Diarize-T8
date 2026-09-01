@@ -19,6 +19,10 @@ DEFAULT_PROMPT = (
     "（[S01]、[S02]、[S03]…）开头，正文为对应的语音内容，"
     "并在段末标注结束时间戳，以清晰标明该段语音范围。"
 )
+DEFAULT_PROMPT_EN = (
+    "Transcribe the audio. For each segment, start with the timestamp and speaker ID "
+    "([S01], [S02], [S03], ...), then the spoken text, and end with the segment timestamp."
+)
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".flv", ".wmv"}
 TokenCallback = Callable[[int], None]
 

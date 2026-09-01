@@ -333,13 +333,15 @@ def test_cross_chunk_speaker_mapping_targets_namespaced_long_audio_speakers():
         False,
         cross_chunk_speaker_map_json='{"part001:S01":"Host"}',
     )
-    json_text, txt_text, srt_text, ass_text, files_text = output.result
+    json_text, txt_text, srt_text, ass_text, files_text, vtt_text, rttm_text = output.result
     json_payload = json.loads(json_text)
     assert json_payload[0]["speaker"] == "S001001"
     assert json_payload[0]["speaker_name"] == "Host"
     assert "[Host]hello" in txt_text
     assert "Host: hello" in srt_text
     assert "Host: hello" in ass_text
+    assert "Host: hello" in vtt_text
+    assert "S001001" in rttm_text
     assert files_text == "{}"
 
 
@@ -740,7 +742,7 @@ def test_long_subtitle_filename_prefix_is_safely_bounded(monkeypatch, tmp_path: 
     )
     files = json.loads(output.result[4])
 
-    assert set(files) == {"json", "txt", "srt", "ass"}
+    assert set(files) == {"json", "txt", "srt", "ass", "vtt", "rttm"}
     assert all(Path(path).is_file() for path in files.values())
     assert all(len(Path(path).name) < 255 for path in files.values())
 

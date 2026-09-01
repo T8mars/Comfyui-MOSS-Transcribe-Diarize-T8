@@ -27,13 +27,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: pip
       - name: Install release validation dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install -r requirements.txt transformers==5.15.1 Pillow pytest comfy-cli==1.16.0 ruff==0.12.12
+          python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt transformers==5.16.1 Pillow pytest comfy-cli==1.19.0 ruff==0.16.5
       - name: Test against pinned ComfyUI V3 API
         run: |
           git clone --filter=blob:none https://github.com/Comfy-Org/ComfyUI.git .compat/ComfyUI
@@ -55,7 +55,7 @@ jobs:
           cp "${RUNNER_TEMP}/release-a/"* dist/
           sha256sum dist/*
       - name: Upload validated release artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-dist
           path: dist/
@@ -77,7 +77,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download validated release artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-dist
           path: dist
@@ -120,7 +120,7 @@ jobs:
         run: echo "::warning::REGISTRY_ACCESS_TOKEN is not configured; Registry publication was skipped."
       - name: Install pinned Registry publisher
         if: ${{ env.REGISTRY_ACCESS_TOKEN != '' }}
-        run: python -m pip install comfy-cli==1.16.0
+        run: python -m pip install comfy-cli==1.19.0
       - name: Publish custom node
         if: ${{ env.REGISTRY_ACCESS_TOKEN != '' }}
         run: |

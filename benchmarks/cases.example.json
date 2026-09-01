@@ -1,0 +1,36 @@
+{
+  "schema": "t8.moss-benchmark.v1",
+  "description": "Copy licensed evaluation audio into benchmarks/audio and adjust the expectations for your reviewed corpus.",
+  "cases": [
+    {
+      "id": "zh-two-speaker-meeting",
+      "audio": "audio/zh_two_speaker_meeting.wav",
+      "reference_text_file": "references/zh_two_speaker_meeting.txt",
+      "mode": "single",
+      "prompt": { "preset_id": "zh_meeting", "language_hint": "中文", "strict_format": true },
+      "expected": { "usable": true, "min_segments": 4, "min_speakers": 2, "min_end_coverage": 0.8, "max_character_error_rate": 0.35, "forbidden_diagnostic_codes": ["invalid_format", "repeated_text"] }
+    },
+    {
+      "id": "en-hotwords-capitalization",
+      "audio": "audio/en_hotwords.wav",
+      "mode": "single",
+      "prompt": { "preset_id": "en_meeting", "language_hint": "English", "hotwords": "OpenMOSS, ComfyUI, T8star-Aix", "strict_format": true },
+      "expected": { "usable": true, "min_segments": 2, "min_end_coverage": 0.8, "required_text": ["OpenMOSS", "ComfyUI", "T8star-Aix"] }
+    },
+    {
+      "id": "multilingual-switching",
+      "audio": "audio/multilingual_switching.wav",
+      "reference_text_file": "references/multilingual_switching.txt",
+      "mode": "single",
+      "prompt": { "preset_id": "multilingual", "language_hint": "auto", "strict_format": true },
+      "expected": { "usable": true, "min_segments": 3, "min_end_coverage": 0.75, "max_character_error_rate": 0.4 }
+    },
+    {
+      "id": "noisy-meeting-long",
+      "audio": "audio/noisy_meeting_long.wav",
+      "mode": "smart_long",
+      "options": { "target_chunk_seconds": 480, "max_chunk_seconds": 600, "overlap_seconds": 2, "speaker_link_mode": "overlap_only" },
+      "expected": { "usable": true, "min_segments": 10, "min_end_coverage": 0.75, "forbidden_diagnostic_codes": ["invalid_format", "timestamp_out_of_range"] }
+    }
+  ]
+}

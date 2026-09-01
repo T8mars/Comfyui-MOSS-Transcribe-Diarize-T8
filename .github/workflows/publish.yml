@@ -60,7 +60,7 @@ jobs:
           echo "::error::REGISTRY_ACCESS_TOKEN is not configured; Registry publication cannot continue."
           exit 1
       - name: Install pinned Registry publisher
-        run: python -m pip install comfy-cli==1.16.0
+        run: python -m pip install comfy-cli==1.19.0
       - name: Publish custom node
         run: |
           comfy --skip-prompt --no-enable-telemetry env

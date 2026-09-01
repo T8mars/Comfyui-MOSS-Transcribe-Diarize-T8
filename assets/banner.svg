@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 514" role="img" aria-labelledby="title desc">
+  <title id="title">MOSS Transcribe Diarize for ComfyUI</title>
+  <desc id="desc">Banner for local and remote speaker-aware transcription nodes.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06142c"/>
+      <stop offset="0.55" stop-color="#102b5c"/>
+      <stop offset="1" stop-color="#32145f"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#35d9ff"/>
+      <stop offset="1" stop-color="#c36dff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="514" fill="url(#bg)"/>
+  <circle cx="1045" cy="65" r="190" fill="#7d4cff" opacity="0.12"/>
+  <circle cx="930" cy="475" r="245" fill="#1ac7ff" opacity="0.09"/>
+  <path d="M675 265h48l22-91 38 184 37-249 43 300 36-205 35 121 29-60h73" fill="none" stroke="url(#wave)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="78" y="190" font-family="Arial, sans-serif" font-size="70" font-weight="700" fill="#ffffff">MOSS Transcribe Diarize</text>
+  <text x="82" y="255" font-family="Arial, sans-serif" font-size="30" fill="#9eeaff">ComfyUI V3 · Local + SGLang Omni + vLLM</text>
+  <text x="82" y="325" font-family="Arial, sans-serif" font-size="25" fill="#d8e4ff">Long audio · speaker timestamps · quality gate · subtitle export</text>
+  <rect x="82" y="370" width="245" height="58" rx="29" fill="#ffffff" opacity="0.12"/>
+  <text x="205" y="408" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#ffffff">T8star-Aix</text>
+</svg>

@@ -127,6 +127,41 @@ def export_ass(
     )
 
 
+def export_vtt(
+    segments: Iterable[SubtitleSegment],
+    *,
+    show_speaker: bool = True,
+    speaker_names: dict[str, str] | None = None,
+) -> str:
+    blocks = ["WEBVTT"]
+    for index, segment in enumerate(segments, start=1):
+        text = _display_text(segment, show_speaker=show_speaker, speaker_names=speaker_names)
+        blocks.append(
+            "\n".join(
+                [
+                    str(index),
+                    f"{format_vtt_time(segment.start)} --> {format_vtt_time(segment.end)}",
+                    text,
+                ]
+            )
+        )
+    return "\n\n".join(blocks) + "\n"
+
+
+def export_rttm(segments: Iterable[SubtitleSegment], *, file_id: str = "moss_audio") -> str:
+    safe_file_id = re.sub(r"[^0-9A-Za-z._-]+", "_", str(file_id)).strip("._") or "moss_audio"
+    lines = []
+    for segment in segments:
+        duration = max(0.0, float(segment.end) - float(segment.start))
+        if duration <= 0:
+            continue
+        speaker = re.sub(r"[^0-9A-Za-z._-]+", "_", segment.speaker).strip("._") or "S00"
+        lines.append(
+            f"SPEAKER {safe_file_id} 1 {float(segment.start):.3f} {duration:.3f} <NA> <NA> {speaker} <NA> <NA>"
+        )
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def write_text(path: str | Path, text: str, *, encoding: str = "utf-8") -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,6 +185,10 @@ def format_ass_time(seconds: float) -> str:
     return f"{hours:d}:{minutes:02d}:{secs:02d}.{centis:02d}"
 
 
+def format_vtt_time(seconds: float) -> str:
+    return format_srt_time(seconds).replace(",", ".")
+
+
 def _ass_style_line(name: str, style: SubtitleStyle, font_size: int, primary_color: str) -> str:
     return (
         f"Style: {name},{style.font_name},{font_size},{primary_color},&H000000FF,{style.outline_color},"
@@ -161,9 +200,12 @@ def _ass_style_line(name: str, style: SubtitleStyle, font_size: int, primary_col
 __all__ = [
     "export_ass",
     "export_json",
+    "export_rttm",
     "export_srt",
+    "export_vtt",
     "format_ass_time",
     "format_srt_time",
+    "format_vtt_time",
     "validate_ass_style",
     "write_text",
 ]

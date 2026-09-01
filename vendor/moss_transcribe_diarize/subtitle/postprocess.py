@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from math import ceil, isfinite
 
 from ..transcript_parser import TranscriptSegment, parse_transcript
 
@@ -91,6 +92,17 @@ def normalize_segments(
     merge_gap: float = DEFAULT_MERGE_GAP,
     regenerate_ids: bool = False,
 ) -> list[SubtitleSegment]:
+    if (
+        not isfinite(float(min_duration))
+        or not isfinite(float(max_duration))
+        or not isfinite(float(merge_gap))
+        or min_duration <= 0
+        or max_duration <= 0
+        or min_duration > max_duration
+        or max_chars <= 0
+        or merge_gap < 0
+    ):
+        raise ValueError("Subtitle timing, length, and merge limits must be finite and positive.")
     prepared = _prepare_segments(segments)
     prepared = _fix_overlaps(prepared)
     prepared = _merge_adjacent(prepared, merge_gap=merge_gap, max_chars=max_chars)
@@ -105,6 +117,81 @@ def normalize_segments(
         for index, segment in enumerate(prepared, start=1):
             segment.id = f"seg_{index:04d}"
     return prepared
+
+
+def postprocess_subtitle_segments(
+    segments: Iterable[SubtitleSegment | dict],
+    *,
+    min_duration: float = DEFAULT_MIN_DURATION,
+    max_duration: float = DEFAULT_MAX_DURATION,
+    max_chars_per_line: int = DEFAULT_MAX_CHARS,
+    max_lines: int = 2,
+    merge_gap: float = DEFAULT_MERGE_GAP,
+) -> list[SubtitleSegment]:
+    if max_chars_per_line <= 0 or max_lines <= 0:
+        raise ValueError("Subtitle line limits must be positive.")
+    processed = normalize_segments(
+        segments,
+        min_duration=min_duration,
+        max_duration=max_duration,
+        max_chars=max_chars_per_line * max_lines,
+        merge_gap=merge_gap,
+        regenerate_ids=True,
+    )
+    return [
+        SubtitleSegment(
+            id=segment.id,
+            start=segment.start,
+            end=segment.end,
+            speaker=segment.speaker,
+            text=_wrap_text(segment.text, max_chars_per_line=max_chars_per_line, max_lines=max_lines),
+        )
+        for segment in processed
+    ]
+
+
+def subtitle_readability_report(
+    segments: Iterable[SubtitleSegment | dict],
+    *,
+    max_chars_per_second: float = 20.0,
+) -> dict:
+    if not isfinite(float(max_chars_per_second)) or max_chars_per_second < 0:
+        raise ValueError("Subtitle reading-speed limit must be finite and non-negative.")
+    prepared = coerce_subtitle_segments(segments)
+    rates = []
+    violations = []
+    for segment in prepared:
+        duration = max(0.0, segment.end - segment.start)
+        character_count = len("".join(segment.text.split()))
+        if duration <= 0:
+            if max_chars_per_second > 0 and character_count:
+                violations.append(
+                    {
+                        "segment_id": segment.id,
+                        "chars_per_second": None,
+                        "limit": float(max_chars_per_second),
+                        "reason": "zero_duration",
+                    }
+                )
+            continue
+        rate = character_count / duration
+        rates.append(rate)
+        if max_chars_per_second > 0 and rate > max_chars_per_second:
+            violations.append(
+                {
+                    "segment_id": segment.id,
+                    "chars_per_second": round(rate, 3),
+                    "limit": float(max_chars_per_second),
+                }
+            )
+    return {
+        "segment_count": len(prepared),
+        "max_chars_per_second": round(max(rates), 3) if rates else 0.0,
+        "average_chars_per_second": round(sum(rates) / len(rates), 3) if rates else 0.0,
+        "limit": float(max_chars_per_second),
+        "violation_count": len(violations),
+        "violations": violations,
+    }
 
 
 def _prepare_segments(segments: Iterable[SubtitleSegment | dict]) -> list[SubtitleSegment]:
@@ -192,13 +279,21 @@ def _split_long_segments(
             continue
 
         chunks = _split_text(segment.text, max_chars=max_chars)
+        duration_parts = ceil(duration / max_duration)
+        if duration_parts > len(chunks):
+            chunks = _balanced_text_parts(
+                segment.text,
+                min(max(duration_parts, len(chunks)), len(segment.text)),
+            )
         if len(chunks) <= 1:
             output.append(segment)
             continue
 
         weights = [max(len(chunk), 1) for chunk in chunks]
         total_chars = sum(weights)
-        if duration >= min_duration * len(chunks):
+        if duration_parts > 1:
+            allocations = [duration / len(chunks)] * len(chunks)
+        elif duration >= min_duration * len(chunks):
             residual = duration - min_duration * len(chunks)
             allocations = [min_duration + residual * weight / total_chars for weight in weights]
         else:
@@ -249,6 +344,21 @@ def _split_text(text: str, *, max_chars: int) -> list[str]:
     return compact
 
 
+def _balanced_text_parts(text: str, count: int) -> list[str]:
+    text = text.strip()
+    count = max(1, min(int(count), len(text)))
+    quotient, remainder = divmod(len(text), count)
+    parts = []
+    cursor = 0
+    for index in range(count):
+        width = quotient + (1 if index < remainder else 0)
+        part = text[cursor : cursor + width].strip()
+        if part:
+            parts.append(part)
+        cursor += width
+    return parts
+
+
 def _join_text(left: str, right: str) -> str:
     if not left:
         return right
@@ -257,3 +367,26 @@ def _join_text(left: str, right: str) -> str:
     if left[-1].isascii() and right[0].isascii():
         return f"{left} {right}"
     return f"{left}{right}"
+
+
+def _wrap_text(text: str, *, max_chars_per_line: int, max_lines: int) -> str:
+    remaining = text.replace("\r", "").replace("\n", "").strip()
+    lines = []
+    while remaining and len(lines) < max_lines:
+        slots_after = max_lines - len(lines) - 1
+        if len(remaining) <= max_chars_per_line:
+            lines.append(remaining)
+            remaining = ""
+            break
+        minimum_cut = max(1, len(remaining) - slots_after * max_chars_per_line)
+        maximum_cut = min(max_chars_per_line, len(remaining))
+        cut = maximum_cut
+        for index in range(maximum_cut - 1, minimum_cut - 2, -1):
+            if remaining[index] in PUNCTUATION:
+                cut = index + 1
+                break
+        lines.append(remaining[:cut].strip())
+        remaining = remaining[cut:].strip()
+    if remaining:
+        lines[-1] = _join_text(lines[-1], remaining)
+    return "\n".join(line for line in lines if line)

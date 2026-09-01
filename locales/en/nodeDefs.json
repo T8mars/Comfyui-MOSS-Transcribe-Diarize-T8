@@ -27,6 +27,20 @@
       "1": { "name": "Model information" }
     }
   },
+  "T8_MOSS_RemoteModelLoader": {
+    "display_name": "MOSS Remote Inference Connection · T8star-Aix",
+    "description": "Connects to an SGLang Omni or vLLM OpenAI-compatible transcription endpoint and requires explicit audio-upload consent.",
+    "inputs": {
+      "endpoint_url": { "name": "Endpoint URL" },
+      "remote_model": { "name": "Remote model ID" },
+      "timeout_seconds": { "name": "Request timeout (sec)" },
+      "allow_remote_upload": { "name": "Allow remote audio upload" }
+    },
+    "outputs": {
+      "0": { "name": "MOSS remote model" },
+      "1": { "name": "Remote model information" }
+    }
+  },
   "T8_MOSS_PromptHotwords": {
     "display_name": "MOSS Prompt & Hotwords · T8star-Aix",
     "description": "Builds a reusable prompt with reviewed presets, language hints, hotwords, and strict output formatting.",
@@ -35,7 +49,8 @@
       "preset_id": { "name": "Scenario preset" },
       "hotwords": { "name": "Hotwords" },
       "language_hint": { "name": "Language hint" },
-      "strict_format": { "name": "Enforce strict format" }
+      "strict_format": { "name": "Enforce strict format" },
+      "custom_language_hint": { "name": "Custom language hint" }
     },
     "outputs": {
       "0": { "name": "MOSS prompt" },
@@ -95,7 +110,8 @@
         "name": "Checkpoint mode",
         "options": { "off": "Off", "read_write": "Resume and save", "restart": "Start over" }
       },
-      "checkpoint_id": { "name": "Checkpoint ID" }
+      "checkpoint_id": { "name": "Checkpoint ID" },
+      "speaker_link_mode": { "name": "Cross-chunk speaker linking" }
     },
     "outputs": {
       "0": { "name": "Audio" },
@@ -106,6 +122,59 @@
       "5": { "name": "MOSS transcript" },
       "6": { "name": "Chunk report" }
     }
+  },
+  "T8_MOSS_WordAlignmentModelLoader": {
+    "display_name": "MOSS Whisper Word Alignment Model · T8star-Aix",
+    "description": "Configures an independent Whisper aligner and loads it only when word alignment runs.",
+    "inputs": {
+      "model_id": { "name": "Model repository or local directory" },
+      "revision": { "name": "Model revision" },
+      "device": { "name": "Device" },
+      "precision": { "name": "Precision" },
+      "language": { "name": "Whisper language" },
+      "chunk_length_seconds": { "name": "Alignment chunk length (sec)" },
+      "release_after_run": { "name": "Release aligner after run" }
+    },
+    "outputs": { "0": { "name": "Word alignment model" }, "1": { "name": "Alignment model information JSON" } }
+  },
+  "T8_MOSS_WordAlignment": {
+    "display_name": "MOSS Independent Word Alignment · T8star-Aix",
+    "description": "Generates word timing anchors with an independent Whisper model and maps them back to the MOSS transcript.",
+    "inputs": {
+      "aligner": { "name": "Word alignment model" },
+      "audio": { "name": "Original audio" },
+      "transcript": { "name": "MOSS transcript" }
+    },
+    "outputs": {
+      "0": { "name": "Word-aligned MOSS transcript" },
+      "1": { "name": "Word timestamps JSON" },
+      "2": { "name": "Alignment report JSON" }
+    }
+  },
+  "T8_MOSS_SpeakerEmbeddingModelLoader": {
+    "display_name": "MOSS WavLM Speaker Model · T8star-Aix",
+    "description": "Configures an independent WavLM X-Vector speaker-verification model.",
+    "inputs": {
+      "model_id": { "name": "Model repository or local directory" },
+      "revision": { "name": "Model revision" },
+      "device": { "name": "Device" },
+      "precision": { "name": "Precision" },
+      "release_after_run": { "name": "Release speaker model after run" }
+    },
+    "outputs": { "0": { "name": "Speaker model" }, "1": { "name": "Speaker model information JSON" } }
+  },
+  "T8_MOSS_SpeakerEmbeddingLink": {
+    "display_name": "MOSS Voiceprint Cross-chunk Linking · T8star-Aix",
+    "description": "Extracts WavLM X-Vectors from the original audio and links speakers while forbidding same-chunk collisions.",
+    "inputs": {
+      "speaker_model": { "name": "Speaker model" },
+      "audio": { "name": "Original audio" },
+      "transcript": { "name": "MOSS transcript" },
+      "similarity_threshold": { "name": "Cosine similarity threshold" },
+      "min_speech_seconds": { "name": "Minimum reference seconds" },
+      "max_reference_seconds": { "name": "Maximum reference seconds" }
+    },
+    "outputs": { "0": { "name": "Voice-linked MOSS transcript" }, "1": { "name": "Speaker link report JSON" } }
   },
   "T8_MOSS_TranscriptValidate": {
     "display_name": "MOSS Transcript Validator · T8star-Aix",
@@ -140,6 +209,23 @@
       "2": { "name": "Quality report JSON" }
     }
   },
+  "T8_MOSS_SubtitlePostprocess": {
+    "display_name": "MOSS Subtitle Postprocess · T8star-Aix",
+    "description": "Merges, splits, and wraps subtitle cues, then reports character reading speed.",
+    "inputs": {
+      "transcript": { "name": "MOSS transcript" },
+      "min_duration": { "name": "Minimum cue duration" },
+      "max_duration": { "name": "Maximum cue duration" },
+      "max_chars_per_line": { "name": "Maximum characters per line" },
+      "max_lines": { "name": "Maximum lines" },
+      "merge_gap": { "name": "Same-speaker merge gap" },
+      "max_chars_per_second": { "name": "Reading speed limit (CPS)" }
+    },
+    "outputs": {
+      "0": { "name": "Postprocessed MOSS transcript" },
+      "1": { "name": "Subtitle postprocess report JSON" }
+    }
+  },
   "T8_MOSS_SubtitleStyle": {
     "display_name": "MOSS Subtitle Style · T8star-Aix",
     "description": "Creates a reusable ASS subtitle style with resolution-aware sizing, layout, outline, and per-speaker colors.",
@@ -164,7 +250,7 @@
   },
   "T8_MOSS_SubtitleExport": {
     "display_name": "MOSS Subtitle Export · T8star-Aix",
-    "description": "Exports JSON, TXT, SRT, and styled ASS content, with optional safe writes under ComfyUI/output.",
+    "description": "Exports JSON, TXT, SRT, styled ASS, WebVTT, and RTTM, with optional safe writes under ComfyUI/output.",
     "inputs": {
       "transcript": { "name": "MOSS transcript" },
       "speaker_names_json": { "name": "Speaker rename JSON" },
@@ -180,19 +266,22 @@
       "1": { "name": "TXT content" },
       "2": { "name": "SRT content" },
       "3": { "name": "ASS content" },
-      "4": { "name": "Exported file paths JSON" }
+      "4": { "name": "Exported file paths JSON" },
+      "5": { "name": "WebVTT content" },
+      "6": { "name": "RTTM speaker annotations" }
     }
   },
   "T8_MOSS_EnvironmentRelease": {
     "display_name": "MOSS Environment Diagnostics & Release · T8star-Aix",
-    "description": "Reports Transformers, PyTorch, CUDA, and cache state, and releases only MOSS models loaded by this node pack.",
+    "description": "Reports Transformers, PyTorch, CUDA, and cache state, and releases only MOSS or auxiliary models loaded by this node pack.",
     "inputs": {
       "action": {
         "name": "Action",
         "options": {
           "report_only": "Report only",
           "release_selected": "Release selected model",
-          "release_all_moss": "Release all MOSS models"
+          "release_all_moss": "Release all MOSS models",
+          "release_all_auxiliary": "Release all alignment and speaker models"
         }
       },
       "model": { "name": "Selected MOSS model" }
