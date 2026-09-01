@@ -8,7 +8,7 @@
 - 导入与处理中界面在普通窗口、跨 1360px 断点、最大化和还原时保持一致的滚动与布局行为。
 - 增加真实打包 EXE 的 Windows 原生最大化/还原回归检查；实测主视图从普通窗口 `1171/1186px` 扩展到最大化 `2048/2048px`，还原后恢复正常。
 - 中英文界面明确说明“主要语言”仅用于提高识别准确率；本项目提供转写、说话人分离、时间戳、声学事件和字幕处理，不执行翻译，也不包含 TTS。
-- 136 项测试通过，1 项按环境跳过，275 个子测试通过；轻量版和完整离线版均通过运行时清单及分卷 ZIP 校验。
+- 137 项测试通过，1 项按环境跳过，275 个子测试通过；轻量版和完整离线版均通过运行时清单及分卷 ZIP 校验。
 
 ## 下载
 
@@ -23,6 +23,6 @@
 - Stabilized import and processing layouts across normal size, the 1360px breakpoint, maximize, and restore.
 - Added a native Windows packaged-EXE regression test for maximize/restore. The main view measured `1171/1186px` normally, `2048/2048px` maximized, and returned to the normal width after restore.
 - Clarified in both UI languages that the language selector is a recognition hint. The product performs transcription, diarization, timestamping, acoustic-event recognition, and subtitle work; translation and TTS are not included.
-- Passed 136 tests, 275 subtests, both packaged runtime inventory gates, and split ZIP reconstruction/CRC/content verification.
+- Passed 137 tests, 275 subtests, both packaged runtime inventory gates, and split ZIP reconstruction/CRC/content verification.
 
 The Windows artifacts are unsigned pre-release builds. The companion ComfyUI node remains the separately published [`v0.4.0`](https://github.com/T8mars/Comfyui-MOSS-Transcribe-Diarize-T8/releases/tag/v0.4.0).
