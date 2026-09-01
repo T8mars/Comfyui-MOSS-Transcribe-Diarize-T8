@@ -4,6 +4,8 @@
 
 由 T8star-Aix 维护的 MOSS Transcribe Diarize ComfyUI V3 节点包。支持本地离线模型以及显式授权的 SGLang Omni/vLLM OpenAI 兼容服务，提供单段与可恢复长音频转写、说话人编号、可选独立模型词级时间戳、跨分块声纹关联、真实 VAD、质量门、字幕可读性后处理以及 JSON/TXT/SRT/ASS/WebVTT/RTTM 导出。节点界面可随 ComfyUI 在中文和英文之间切换，默认仍为中文。
 
+Windows 独立字幕工作台整合包请下载 [`desktop-v0.2.3`](https://github.com/T8mars/Comfyui-MOSS-Transcribe-Diarize-T8/releases/tag/desktop-v0.2.3)。它提供转写、说话人分离、字幕编辑与导出，不包含翻译或 TTS；配套 ComfyUI 节点仍为 `v0.4.0`。
+
 ## 安装
 
 1. 推荐先在 ComfyUI Manager 中搜索 `comfyui-moss-transcribe-diarize-t8` 并安装。也可以克隆到 ComfyUI 的 `custom_nodes`：

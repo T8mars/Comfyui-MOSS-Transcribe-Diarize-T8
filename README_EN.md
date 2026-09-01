@@ -4,6 +4,8 @@
 
 A MOSS Transcribe Diarize ComfyUI V3 custom node pack maintained by T8star-Aix. It supports both local offline inference and explicitly authorized SGLang Omni/vLLM OpenAI-compatible services, with single-pass and resumable long-audio transcription, speaker IDs, optional independent-model word timestamps, cross-chunk voice-embedding links, real VAD, quality gating, subtitle readability postprocessing, and JSON/TXT/SRT/ASS/WebVTT/RTTM export. The node UI follows ComfyUI's Chinese/English language setting; Chinese remains the default.
 
+For the standalone Windows Subtitle Studio bundle, download [`desktop-v0.2.3`](https://github.com/T8mars/Comfyui-MOSS-Transcribe-Diarize-T8/releases/tag/desktop-v0.2.3). It provides transcription, diarization, subtitle editing, and export; translation and TTS are not included. The companion ComfyUI node remains `v0.4.0`.
+
 ## Installation
 
 1. Recommended: search for `comfyui-moss-transcribe-diarize-t8` in ComfyUI Manager and install it. You can also clone the repository into ComfyUI's `custom_nodes` directory:
