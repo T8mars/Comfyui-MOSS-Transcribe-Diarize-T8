@@ -82,9 +82,10 @@ jobs:
           echo "Testing ComfyUI commit ${comfyui_sha}"
           echo "### Latest ComfyUI compatibility" >> "$GITHUB_STEP_SUMMARY"
           echo "Tested commit: \`${comfyui_sha}\`" >> "$GITHUB_STEP_SUMMARY"
-          # The current V3 API imports these separately packaged runtime modules during collection.
-          # Read ComfyUI's own exact pins so the rolling compatibility job follows its checkout.
-          python -m pip install $(grep -E '^comfy-(aimdo|kitchen)([<>=!~].*)?$' .compat/ComfyUI/requirements.txt)
+          # Install the checkout's complete runtime surface: comfy_api.latest imports
+          # ordinary ComfyUI modules during collection, not only its split packages.
+          python -m pip install -r .compat/ComfyUI/requirements.txt \
+            --extra-index-url https://download.pytorch.org/whl/cpu
           PYTHONPATH="$PWD/.compat/ComfyUI" python -m pytest -q tests
 
   package-metadata:
