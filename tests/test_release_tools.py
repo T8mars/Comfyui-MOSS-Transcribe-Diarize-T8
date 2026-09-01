@@ -60,14 +60,23 @@ def test_release_build_is_reproducible_and_excludes_development_only_files(tmp_p
     assert not any(name.startswith(".compat/") for name in names)
 
     with zipfile.ZipFile(archive) as package:
-        packaged_python = "\n".join(
-            package.read(name).decode("utf-8")
+        python_sources = {
+            name: package.read(name).decode("utf-8")
             for name in names
             if name.endswith(".py")
-        )
+        }
+        packaged_python = "\n".join(python_sources.values())
     assert "subprocess.run(" not in packaged_python
-    assert "urllib.request.urlopen(" not in packaged_python
     assert "os.environ.get(" not in packaged_python
+    network_enabled = [
+        name for name, source in python_sources.items() if "urllib.request.urlopen(" in source
+    ]
+    assert network_enabled == ["scripts/prepare_public_benchmarks.py"]
+    benchmark_downloader = python_sources[network_enabled[0]]
+    assert 'DATASET_SERVER = "https://datasets-server.huggingface.co/rows"' in benchmark_downloader
+    assert 'DATASET_API = "https://huggingface.co/api/datasets/google/fleurs"' in benchmark_downloader
+    assert 'headers={"User-Agent": "T8-MOSS-public-benchmark/0.4.0"}' in benchmark_downloader
+    assert '"http://' not in benchmark_downloader
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["node_version"] == "0.4.0"

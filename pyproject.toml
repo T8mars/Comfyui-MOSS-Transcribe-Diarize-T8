@@ -48,3 +48,12 @@ requires-comfyui = ">=0.3.48"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = [".compat"]
+
+[tool.ruff.lint]
+# Keep CI focused on syntax/import correctness; vendored audited upstream code intentionally
+# retains its source formatting, and Ruff's expanding preview rule set is not a release gate.
+select = ["E4", "E7", "E9", "F"]
